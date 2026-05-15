@@ -7,6 +7,7 @@ const searchInput = document.getElementById('searchInput');
 const customerHistory = document.getElementById('customerHistory');
 const archivedBody = document.getElementById('archivedBody');
 const archivedSearchInput = document.getElementById('archivedSearchInput');
+const autosaveStatus = document.getElementById('autosaveStatus');
 const dashboardIds = {
   dueToday: document.getElementById('dashDueToday'),
   lateOrders: document.getElementById('dashLateOrders'),
@@ -26,6 +27,8 @@ const supabaseClient = window.supabase.createClient(
 );
 let itemCount = 3;
 let editingInvoiceId = null;
+let autosaveTimer = null;
+let isAutosaving = false;
 
 function money(n){return `$${(Number(n)||0).toFixed(2)}`}
 function today(){return new Date().toISOString().slice(0,10)}
@@ -120,6 +123,7 @@ function duplicateOrder(order){
   form.orderDate.value = today();
   form.pickupDate.value = '';
   form.status.value = 'Received';
+  setAutosaveStatus('Duplicated order. Manual save required.');
   calculate();
   document.querySelector('[data-view="edit"]').click();
 }
@@ -225,6 +229,93 @@ function formData(){
   }
   return data;
 }
+
+function invoiceRowFromForm(){
+  const d = formData();
+
+  return {
+    invoice_number: d.invoiceNumber,
+    order_date: d.orderDate || null,
+    pickup_date: d.pickupDate || null,
+
+    school: d.school || '',
+
+    parent_name: d.parentName || '',
+    student_name: d.studentName || '',
+
+    phone: d.phone || '',
+    email: d.email || '',
+
+    address: d.address || '',
+    apt: d.apt || '',
+    city: d.city || '',
+    zip: d.zip || '',
+
+    email_list: !!d.emailList,
+
+    items: d.items || [],
+
+    subtotal: Number(d.subtotal) || 0,
+    discount: Number(d.discount) || 0,
+    tax: Number(d.tax) || 0,
+    total: Number(d.total) || 0,
+    payment: Number(d.payment) || 0,
+    balance: Number(d.balance) || 0,
+
+    status: d.status || 'Received',
+    notes: d.notes || '',
+    archived: false
+  };
+}
+
+function setAutosaveStatus(message, state = ''){
+  if (!autosaveStatus) return;
+
+  autosaveStatus.textContent = message;
+  autosaveStatus.className = 'autosave-status';
+
+  if (state) autosaveStatus.classList.add(state);
+}
+
+function queueAutosave(){
+  calculate();
+
+  if (!editingInvoiceId) {
+    setAutosaveStatus('Manual save required for new invoices.');
+    return;
+  }
+
+  clearTimeout(autosaveTimer);
+  setAutosaveStatus('Unsaved changes...', 'saving');
+  autosaveTimer = setTimeout(autosaveExistingInvoice, 900);
+}
+
+async function autosaveExistingInvoice(){
+  if (!editingInvoiceId || isAutosaving) return;
+
+  isAutosaving = true;
+  setAutosaveStatus('Saving...', 'saving');
+
+  const { error } = await supabaseClient
+    .from('invoices')
+    .update(invoiceRowFromForm())
+    .eq('id', editingInvoiceId);
+
+  isAutosaving = false;
+
+  if (error) {
+    console.error(error);
+    setAutosaveStatus('Autosave failed. Use Submit / Save.', 'error');
+    return;
+  }
+
+  setAutosaveStatus('Saved automatically.', 'saved');
+  await populateCustomers();
+  await renderDatabase();
+  await renderArchivedDatabase();
+  await renderDashboard();
+}
+
 function setForm(data){
 
   form.invoiceNumber.value = data.invoice_number || data.invoiceNumber || '';
@@ -427,41 +518,8 @@ async function submitInvoice(){
 
   calculate();
 
-  const d = formData();
-
-  const invoiceRow = {
-    invoice_number: d.invoiceNumber,
-    order_date: d.orderDate || null,
-    pickup_date: d.pickupDate || null,
-
-    school: d.school || '',
-
-    parent_name: d.parentName || '',
-    student_name: d.studentName || '',
-
-    phone: d.phone || '',
-    email: d.email || '',
-
-    address: d.address || '',
-    apt: d.apt || '',
-    city: d.city || '',
-    zip: d.zip || '',
-
-    email_list: !!d.emailList,
-
-    items: d.items || [],
-
-    subtotal: Number(d.subtotal) || 0,
-    discount: Number(d.discount) || 0,
-    tax: Number(d.tax) || 0,
-    total: Number(d.total) || 0,
-    payment: Number(d.payment) || 0,
-    balance: Number(d.balance) || 0,
-
-    status: d.status || 'Received',
-    notes: d.notes || '',
-    archived: false
-  };
+  const invoiceRow = invoiceRowFromForm();
+  const wasEditing = Boolean(editingInvoiceId);
 
   let error;
 
@@ -489,7 +547,9 @@ async function submitInvoice(){
     return;
   }
 
-  editingInvoiceId = null;
+  if (!wasEditing) editingInvoiceId = null;
+
+  setAutosaveStatus(wasEditing ? 'Saved manually. Autosave still on.' : 'Invoice saved. Manual save required for new invoices.', wasEditing ? 'saved' : '');
 
   await populateCustomers();
   await renderDatabase();
@@ -509,11 +569,12 @@ function newInvoice(){
   form.tax.value = '0';
   form.payment.value = '0';
   renderCustomerHistory(null);
+  setAutosaveStatus('Manual save required for new invoices.');
   calculate();
 }
 
 document.querySelectorAll('.tab').forEach(btn=>btn.addEventListener('click',()=>{document.querySelectorAll('.tab,.view').forEach(x=>x.classList.remove('active'));btn.classList.add('active');document.getElementById(btn.dataset.view+'View').classList.add('active');renderPreview();renderDatabase();renderArchivedDatabase();renderDashboard();}));
-form.addEventListener('input', calculate);
+form.addEventListener('input', queueAutosave);
 document.getElementById('submitBtn').onclick=submitInvoice;
 document.getElementById('printBtn').onclick=()=>{renderPreview();document.querySelector('[data-view="preview"]').click();setTimeout(()=>window.print(),60)};
 document.getElementById('printTopBtn').onclick=()=>{renderPreview();document.querySelector('[data-view="preview"]').click();setTimeout(()=>window.print(),60)};
@@ -534,6 +595,7 @@ customerSelect.onchange = async () => {
     form.orderDate.value = today();
     form.pickupDate.value = '';
     form.status.value = 'Received';
+    setAutosaveStatus('Returning customer loaded as a new invoice. Manual save required.');
     calculate();
 
     renderCustomerHistory(selected, rows);
@@ -601,6 +663,7 @@ async function loadInvoiceForEdit(id){
   }
 
   setForm(data);
+  setAutosaveStatus('Autosave is on for this invoice.', 'saved');
   renderCustomerHistory(data, cachedAllInvoices.length ? cachedAllInvoices : cachedInvoices);
 
   document.querySelector('[data-view="edit"]').click();

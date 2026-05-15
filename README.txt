@@ -1,17 +1,12 @@
-Living Word Imprints - Feature Add-on
+Living Word Imprints - Full Width + Autosave Patch
 
-Added only:
-- Dashboard tab with business cards
-- Customer history panel
-- Duplicate previous order shortcut
-- Auto-archive support for completed orders older than 30 days
+Changes added only:
+1. Full-width admin layout so Dashboard/Database/Archived views have more room.
+2. Autosave status indicator in the sidebar.
+3. Autosave for existing invoices loaded through Edit.
 
-Before testing archive support, run supabase-archive-column.sql in Supabase SQL Editor.
-
-Files to upload/replace:
-- index.html
-- styles.css
-- script.js
-- assets/logo.png
-
-Do not rename files unless you update index.html references.
+Important behavior:
+- New invoices still require Submit / Save.
+- Existing invoices autosave after edits.
+- Print/PDF layout was not changed.
+- Invoice preview styles were not changed.
