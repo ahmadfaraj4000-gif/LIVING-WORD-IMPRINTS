@@ -21,15 +21,21 @@
     <aside class="panel no-print">
       <h2>Invoice Controls</h2>
       <div class="tabs">
-        <button class="tab active" data-view="edit" type="button">Edit</button>
+        <button class="tab active" data-view="dashboard" type="button">Dashboard</button>
+        <button class="tab" data-view="edit" type="button">Edit</button>
         <button class="tab" data-view="preview" type="button">Preview</button>
         <button class="tab" data-view="database" type="button">Database</button>
+        <button class="tab" data-view="archived" type="button">Archived</button>
       </div>
 
       <label class="field-label">Returning Customer</label>
       <select id="customerSelect">
         <option value="">Select saved customer...</option>
       </select>
+
+      <div id="customerHistory" class="customer-history">
+        <p class="history-empty">Select a returning customer to view order history.</p>
+      </div>
 
       <div class="quick-actions">
         <button class="primary" id="submitBtn" type="button">Submit / Save</button>
@@ -41,7 +47,30 @@
     </aside>
 
     <section class="workspace">
-      <section id="editView" class="view active no-print">
+      <section id="dashboardView" class="view active no-print">
+        <div class="dashboard-head">
+          <h1>Dashboard</h1>
+          <p>Quick view of open orders, pickups, revenue, and late jobs.</p>
+        </div>
+
+        <div class="dashboard-grid">
+          <div class="dashboard-card"><span>Orders Due Today</span><strong id="dashDueToday">0</strong></div>
+          <div class="dashboard-card"><span>Late Orders</span><strong id="dashLateOrders">0</strong></div>
+          <div class="dashboard-card"><span>Orders In Progress</span><strong id="dashInProgress">0</strong></div>
+          <div class="dashboard-card"><span>Revenue This Month</span><strong id="dashRevenueMonth">$0.00</strong></div>
+          <div class="dashboard-card"><span>Total Open Orders</span><strong id="dashOpenOrders">0</strong></div>
+          <div class="dashboard-card"><span>Pickup Today</span><strong id="dashPickupToday">0</strong></div>
+        </div>
+
+        <div class="dashboard-panel">
+          <h2>Needs Attention</h2>
+          <div id="dashboardAttentionList" class="attention-list">
+            <p>No late orders right now.</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="editView" class="view no-print">
         <form id="invoiceForm" class="edit-card">
           <div class="edit-head">
             <h1>Edit Invoice</h1>
@@ -101,8 +130,21 @@
         </div>
         <div class="table-wrap">
           <table class="db-table">
-            <thead><tr><th>Invoice</th><th>Parent</th><th>Phone</th><th>Email</th><th>Status</th><th>Days</th><th>Pickup</th><th>Notes</th></tr></thead>
+            <thead><tr><th>Invoice</th><th>Parent</th><th>Phone</th><th>Email</th><th>Status</th><th>Days</th><th>Pickup</th><th>Notes</th><th>Edit</th><th>Archive</th></tr></thead>
             <tbody id="databaseBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="archivedView" class="view no-print">
+        <div class="database-head">
+          <h2>Archived Orders</h2>
+          <input id="archivedSearchInput" placeholder="Search archived parent, phone, or email..." />
+        </div>
+        <div class="table-wrap">
+          <table class="db-table">
+            <thead><tr><th>Invoice</th><th>Parent</th><th>Phone</th><th>Email</th><th>Status</th><th>Days</th><th>Pickup</th><th>Notes</th><th>Edit</th><th>Restore</th></tr></thead>
+            <tbody id="archivedBody"></tbody>
           </table>
         </div>
       </section>
