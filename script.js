@@ -400,6 +400,7 @@ function invoiceRowFromForm(){
     tax: Number(d.tax) || 0,
     total: Number(d.total) || 0,
     payment: Number(d.payment) || 0,
+    payment_type: d.paymentType || '',
     balance: Number(d.balance) || 0,
 
     status: d.status || 'Received',
@@ -597,6 +598,7 @@ async function renderDatabase(){
             <option ${x.status === 'Completed' ? 'selected' : ''}>Completed</option>
           </select>
         </td>
+        <td>${esc(storedNotes.meta.paymentType || x.payment_type || '')}</td>
         <td><span class="badge ${ageClass(days)}">${days} days</span></td>
         <td>${esc(x.pickup_date || '')}</td>
         <td><input class="note-input" data-index="${idx}" data-id="${x.id}" value="${esc(storedNotes.notes || '')}"></td>
@@ -636,6 +638,7 @@ async function renderArchivedDatabase(){
         <td>${esc(x.phone || '')}</td>
         <td>${esc(x.email || '')}</td>
         <td>${esc(x.status || '')}</td>
+        <td>${esc(storedNotes.meta.paymentType || x.payment_type || '')}</td>
         <td><span class="badge ${ageClass(days)}">${days} days</span></td>
         <td>${esc(x.pickup_date || '')}</td>
         <td>${esc(storedNotes.notes || '')}</td>
