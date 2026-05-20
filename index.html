@@ -54,16 +54,19 @@
         </div>
 
         <div class="dashboard-grid">
-          <div class="dashboard-card"><span>Orders Due Today</span><strong id="dashDueToday">0</strong></div>
-          <div class="dashboard-card"><span>Late Orders</span><strong id="dashLateOrders">0</strong></div>
-          <div class="dashboard-card"><span>Orders In Progress</span><strong id="dashInProgress">0</strong></div>
+          <button class="dashboard-card filter-card" data-dashboard-filter="dueToday" type="button"><span>Open Due Today</span><strong id="dashDueToday">0</strong></button>
+          <button class="dashboard-card filter-card" data-dashboard-filter="lateOrders" type="button"><span>Late Orders</span><strong id="dashLateOrders">0</strong></button>
+          <button class="dashboard-card filter-card" data-dashboard-filter="inProgress" type="button"><span>Orders In Progress</span><strong id="dashInProgress">0</strong></button>
           <div class="dashboard-card"><span>Revenue This Month</span><strong id="dashRevenueMonth">$0.00</strong></div>
-          <div class="dashboard-card"><span>Total Open Orders</span><strong id="dashOpenOrders">0</strong></div>
-          <div class="dashboard-card"><span>Pickup Today</span><strong id="dashPickupToday">0</strong></div>
+          <button class="dashboard-card filter-card" data-dashboard-filter="openOrders" type="button"><span>Total Open Orders</span><strong id="dashOpenOrders">0</strong></button>
+          <button class="dashboard-card filter-card" data-dashboard-filter="pickupToday" type="button"><span>All Pickups Today</span><strong id="dashPickupToday">0</strong></button>
         </div>
 
         <div class="dashboard-panel">
-          <h2>Needs Attention</h2>
+          <div class="dashboard-panel-head">
+            <h2 id="dashboardPanelTitle">Needs Attention</h2>
+            <button class="ghost" id="clearDashboardFilterBtn" type="button" hidden>Clear Filter</button>
+          </div>
           <div id="dashboardAttentionList" class="attention-list">
             <p>No late orders right now.</p>
           </div>
@@ -85,11 +88,12 @@
 
           <h3>Customer Information</h3>
           <div class="form-grid two">
-            <label>School<input name="school"></label>
-            <label>Parent Name<input name="parentName"></label>
+            <label>School<input name="school" required></label>
             <label>Student Name<input name="studentName"></label>
-            <label>Phone<input name="phone"></label>
-            <label>Email<input name="email" type="email"></label>
+            <label>Parent First Name<input name="parentFirstName" required></label>
+            <label>Parent Last Name<input name="parentLastName" required></label>
+            <label>Phone<input name="phone" inputmode="tel" placeholder="xxx-xxx-xxxx" required></label>
+            <label>Email<input name="email" type="email" required></label>
             <label>Address<input name="address"></label>
             <label>Apt<input name="apt"></label>
             <label>City<input name="city"></label>
@@ -110,10 +114,24 @@
             <label>Payment<input name="payment" type="number" step="0.01" value="0"></label>
             <label>Balance<input name="balance" readonly></label>
           </div>
+          <div class="form-grid two payment-grid">
+            <label>Payment Type
+              <select name="paymentType">
+                <option value="">Select payment type...</option>
+                <option value="Card">Card</option>
+                <option value="Cash">Cash</option>
+                <option value="Voucher">Voucher</option>
+              </select>
+            </label>
+            <input name="voucherId" type="hidden">
+            <input name="voucherProvider" type="hidden">
+            <input name="voucherAmount" type="hidden">
+          </div>
 
           <h3>Admin Tracking</h3>
           <div class="form-grid two">
             <label>Status<select name="status"><option>Received</option><option>In Progress</option><option>Completed</option></select></label>
+            <label>Order Taken By<select name="orderTakenBy"><option value="">Select name...</option><option>Hermin</option><option>Placeholder Name</option></select></label>
             <label>Internal Notes<textarea name="notes" placeholder="Editable internal notes..."></textarea></label>
           </div>
         </form>
@@ -126,7 +144,23 @@
       <section id="databaseView" class="view no-print">
         <div class="database-head">
           <h2>Saved Orders</h2>
-          <input id="searchInput" placeholder="Search parent, phone, or email..." />
+          <input id="searchInput" placeholder="Search school, parent, phone, or email..." />
+        </div>
+        <div class="database-filters">
+          <label>Database Filter
+            <select id="databaseFilterSelect">
+              <option value="">All Saved Orders</option>
+              <option value="dueToday">Open Due Today</option>
+              <option value="lateOrders">Late Orders</option>
+              <option value="inProgress">Orders In Progress</option>
+              <option value="openOrders">Total Open Orders</option>
+              <option value="pickupToday">All Pickups Today</option>
+            </select>
+          </label>
+        </div>
+        <div class="active-filter" id="activeDatabaseFilter" hidden>
+          <span id="activeDatabaseFilterText"></span>
+          <button class="ghost" id="clearDatabaseFilterBtn" type="button">Clear Filter</button>
         </div>
         <div class="table-wrap">
           <table class="db-table">
@@ -139,7 +173,7 @@
       <section id="archivedView" class="view no-print">
         <div class="database-head">
           <h2>Archived Orders</h2>
-          <input id="archivedSearchInput" placeholder="Search archived parent, phone, or email..." />
+          <input id="archivedSearchInput" placeholder="Search archived school, parent, phone, or email..." />
         </div>
         <div class="table-wrap">
           <table class="db-table">
@@ -150,6 +184,25 @@
       </section>
     </section>
   </main>
+  <div class="modal-backdrop no-print" id="voucherModal" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="voucherModalTitle">
+      <div class="modal-head">
+        <div>
+          <h2 id="voucherModalTitle">Voucher Payment</h2>
+          <p>Internal voucher details for this order.</p>
+        </div>
+      </div>
+      <div class="form-grid one">
+        <label>Voucher ID<input id="voucherIdInput"></label>
+        <label>Voucher Provider<input id="voucherProviderInput"></label>
+        <label>Amount<input id="voucherAmountInput" type="number" step="0.01" min="0"></label>
+      </div>
+      <div class="modal-actions">
+        <button class="ghost" id="voucherCancelBtn" type="button">Cancel</button>
+        <button class="primary" id="voucherSaveBtn" type="button">Save Voucher</button>
+      </div>
+    </div>
+  </div>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="script.js"></script>
 </body>

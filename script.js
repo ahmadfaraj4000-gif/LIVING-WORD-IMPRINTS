@@ -8,6 +8,16 @@ const customerHistory = document.getElementById('customerHistory');
 const archivedBody = document.getElementById('archivedBody');
 const archivedSearchInput = document.getElementById('archivedSearchInput');
 const autosaveStatus = document.getElementById('autosaveStatus');
+const activeDatabaseFilter = document.getElementById('activeDatabaseFilter');
+const activeDatabaseFilterText = document.getElementById('activeDatabaseFilterText');
+const clearDatabaseFilterBtn = document.getElementById('clearDatabaseFilterBtn');
+const databaseFilterSelect = document.getElementById('databaseFilterSelect');
+const dashboardPanelTitle = document.getElementById('dashboardPanelTitle');
+const clearDashboardFilterBtn = document.getElementById('clearDashboardFilterBtn');
+const voucherModal = document.getElementById('voucherModal');
+const voucherIdInput = document.getElementById('voucherIdInput');
+const voucherProviderInput = document.getElementById('voucherProviderInput');
+const voucherAmountInput = document.getElementById('voucherAmountInput');
 const dashboardIds = {
   dueToday: document.getElementById('dashDueToday'),
   lateOrders: document.getElementById('dashLateOrders'),
@@ -18,6 +28,7 @@ const dashboardIds = {
   attentionList: document.getElementById('dashboardAttentionList')
 };
 const STORAGE_KEY = 'lwi_invoices_frontend_v2';
+const INTERNAL_META_MARKER = 'LWI_INTERNAL_META:';
 const SUPABASE_URL = 'https://wwawmmnckibtamquillt.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind3YXdtbW5ja2lidGFtcXVpbGx0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg4MTk1NjEsImV4cCI6MjA5NDM5NTU2MX0.kfc9UXmvm1jfYIhW3vHaKbpEBupu1xurQxlYCKoupPY';
 
@@ -29,11 +40,79 @@ let itemCount = 3;
 let editingInvoiceId = null;
 let autosaveTimer = null;
 let isAutosaving = false;
+let dashboardFilter = '';
+let databaseFilter = '';
 
 function money(n){return `$${(Number(n)||0).toFixed(2)}`}
 function today(){return new Date().toISOString().slice(0,10)}
 function invoiceNo(){return String(Date.now()).slice(-6)}
 function esc(v){return String(v ?? '').replace(/[&<>"]/g, s=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[s]))}
+function formatParentName(lastName, firstName){
+  const last = String(lastName || '').trim();
+  const first = String(firstName || '').trim();
+  if (last && first) return `${last}, ${first}`;
+  return last || first;
+}
+function splitParentName(data, meta = {}){
+  if (meta.parentLastName || meta.parentFirstName) {
+    return {
+      lastName: meta.parentLastName || '',
+      firstName: meta.parentFirstName || ''
+    };
+  }
+
+  const fullName = String(data.parent_name || data.parentName || '').trim();
+  if (!fullName) return { lastName: '', firstName: '' };
+
+  if (fullName.includes(',')) {
+    const [lastName, ...firstParts] = fullName.split(',');
+    return {
+      lastName: lastName.trim(),
+      firstName: firstParts.join(',').trim()
+    };
+  }
+
+  const parts = fullName.split(/\s+/);
+  if (parts.length === 1) return { lastName: parts[0], firstName: '' };
+
+  return {
+    lastName: parts.pop(),
+    firstName: parts.join(' ')
+  };
+}
+function formatPhoneNumber(value){
+  const digits = String(value || '').replace(/\D/g, '');
+  if (!digits) return '';
+  if (digits.length <= 3) return digits;
+  if (digits.length <= 6) return `${digits.slice(0, 3)}-${digits.slice(3)}`;
+  return `${digits.slice(0, 3)}-${digits.slice(3, 6)}-${digits.slice(6)}`;
+}
+function splitStoredNotes(value){
+  const notes = String(value || '');
+  const markerIndex = notes.indexOf(INTERNAL_META_MARKER);
+
+  if (markerIndex === -1) {
+    return { notes, meta: {} };
+  }
+
+  const visibleNotes = notes.slice(0, markerIndex).trimEnd();
+  const encoded = notes.slice(markerIndex + INTERNAL_META_MARKER.length).trim();
+
+  try {
+    return {
+      notes: visibleNotes,
+      meta: JSON.parse(decodeURIComponent(escape(atob(encoded))))
+    };
+  } catch (error) {
+    console.warn('Could not read saved internal details.', error);
+    return { notes: visibleNotes, meta: {} };
+  }
+}
+function packStoredNotes(notes, meta){
+  const cleanNotes = String(notes || '').trimEnd();
+  const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(meta))));
+  return `${cleanNotes}${cleanNotes ? '\n\n' : ''}${INTERNAL_META_MARKER}${encoded}`;
+}
 let cachedInvoices = [];
 let cachedAllInvoices = [];
 
@@ -187,22 +266,72 @@ async function renderDashboard(){
   if (dashboardIds.pickupToday) dashboardIds.pickupToday.textContent = pickupToday.length;
 
   if (dashboardIds.attentionList) {
-    dashboardIds.attentionList.innerHTML = lateOrders.length
-      ? lateOrders.slice(0, 6).map(row => `
+    const panelRows = dashboardFilter ? rows.filter(row => rowMatchesOrderFilter(row, dashboardFilter)) : lateOrders;
+    const emptyMessage = dashboardFilter
+      ? `No ${String(databaseFilterLabels[dashboardFilter] || 'orders').toLowerCase()} right now.`
+      : 'No late orders right now.';
+
+    document.querySelectorAll('.filter-card').forEach(card => {
+      card.classList.toggle('active-filter-card', card.dataset.dashboardFilter === dashboardFilter);
+    });
+    if (dashboardPanelTitle) dashboardPanelTitle.textContent = dashboardFilter ? databaseFilterLabels[dashboardFilter] : 'Needs Attention';
+    if (clearDashboardFilterBtn) clearDashboardFilterBtn.hidden = !dashboardFilter;
+
+    dashboardIds.attentionList.innerHTML = panelRows.length
+      ? panelRows.slice(0, 10).map(row => `
           <div class="attention-item">
             <div>
               <strong>${esc(row.parent_name || 'Unknown Customer')}</strong><br>
-              <small>Invoice ${esc(row.invoice_number || '')} / Pickup ${esc(row.pickup_date || 'TBD')}</small>
+              <small>Invoice ${esc(row.invoice_number || '')} / Status ${esc(row.status || 'Received')} / Pickup ${esc(row.pickup_date || 'TBD')}</small>
             </div>
-            <span class="badge red">${daysSince(row.pickup_date)} days late</span>
+            <span class="badge ${ageClass(daysSince(row.date_submitted || row.created_at))}">${daysSince(row.date_submitted || row.created_at)} days</span>
           </div>
         `).join('')
-      : '<p>No late orders right now.</p>';
+      : `<p>${esc(emptyMessage)}</p>`;
   }
 }
 
 function daysSince(date){return Math.max(0, Math.floor((new Date()-new Date(date))/(1000*60*60*24)))}
 function ageClass(days){return days<=7?'green':days<=14?'yellow':'red'}
+const databaseFilterLabels = {
+  dueToday: 'Open Due Today',
+  lateOrders: 'Late Orders',
+  inProgress: 'Orders In Progress',
+  openOrders: 'Total Open Orders',
+  pickupToday: 'All Pickups Today'
+};
+
+function rowMatchesOrderFilter(row, filter){
+  const todayValue = today();
+  const isOpen = row.status !== 'Completed';
+
+  if (filter === 'dueToday') return isOpen && row.pickup_date === todayValue;
+  if (filter === 'lateOrders') return isOpen && row.pickup_date && row.pickup_date < todayValue;
+  if (filter === 'inProgress') return row.status === 'In Progress';
+  if (filter === 'openOrders') return isOpen;
+  if (filter === 'pickupToday') return row.pickup_date === todayValue;
+
+  return true;
+}
+
+function rowMatchesDatabaseFilter(row){
+  return rowMatchesOrderFilter(row, databaseFilter);
+}
+
+function updateFilterDisplay(){
+  if (!activeDatabaseFilter || !activeDatabaseFilterText) return;
+
+  if (!databaseFilter) {
+    activeDatabaseFilter.hidden = true;
+    activeDatabaseFilterText.textContent = '';
+    if (databaseFilterSelect) databaseFilterSelect.value = '';
+    return;
+  }
+
+  activeDatabaseFilter.hidden = false;
+  activeDatabaseFilterText.textContent = `Showing: ${databaseFilterLabels[databaseFilter] || 'Filtered Orders'}`;
+  if (databaseFilterSelect) databaseFilterSelect.value = databaseFilter;
+}
 
 function createRows(existingItems=[]){
   itemsEditor.innerHTML='';
@@ -223,6 +352,8 @@ function createRows(existingItems=[]){
 function formData(){
   const data=Object.fromEntries(new FormData(form).entries());
   data.emailList = form.emailList.checked;
+  data.parentName = formatParentName(data.parentLastName, data.parentFirstName);
+  data.phone = formatPhoneNumber(data.phone);
   data.items=[];
   for(let i=0;i<itemCount;i++){
     data.items.push({amount:data[`amount_${i}`]||'',description:data[`description_${i}`]||'',color:data[`color_${i}`]||'',size:data[`size_${i}`]||'',price:data[`price_${i}`]||'',line:data[`line_${i}`]||''});
@@ -232,6 +363,15 @@ function formData(){
 
 function invoiceRowFromForm(){
   const d = formData();
+  const internalMeta = {
+    parentFirstName: d.parentFirstName || '',
+    parentLastName: d.parentLastName || '',
+    orderTakenBy: d.orderTakenBy || '',
+    paymentType: d.paymentType || '',
+    voucherId: d.voucherId || '',
+    voucherProvider: d.voucherProvider || '',
+    voucherAmount: d.voucherAmount || ''
+  };
 
   return {
     invoice_number: d.invoiceNumber,
@@ -263,7 +403,7 @@ function invoiceRowFromForm(){
     balance: Number(d.balance) || 0,
 
     status: d.status || 'Received',
-    notes: d.notes || '',
+    notes: packStoredNotes(d.notes || '', internalMeta),
     archived: false
   };
 }
@@ -317,16 +457,19 @@ async function autosaveExistingInvoice(){
 }
 
 function setForm(data){
+  const storedNotes = splitStoredNotes(data.notes || '');
+  const parentName = splitParentName(data, storedNotes.meta);
 
   form.invoiceNumber.value = data.invoice_number || data.invoiceNumber || '';
   form.orderDate.value = data.order_date || data.orderDate || '';
   form.pickupDate.value = data.pickup_date || data.pickupDate || '';
 
   form.school.value = data.school || '';
-  form.parentName.value = data.parent_name || data.parentName || '';
+  form.parentLastName.value = parentName.lastName || '';
+  form.parentFirstName.value = parentName.firstName || '';
   form.studentName.value = data.student_name || data.studentName || '';
 
-  form.phone.value = data.phone || '';
+  form.phone.value = formatPhoneNumber(data.phone || '');
   form.email.value = data.email || '';
 
   form.address.value = data.address || '';
@@ -338,9 +481,14 @@ function setForm(data){
 
   form.discount.value = data.discount || 0;
   form.payment.value = data.payment || 0;
+  form.paymentType.value = storedNotes.meta.paymentType || data.payment_type || data.paymentType || '';
+  form.voucherId.value = storedNotes.meta.voucherId || data.voucher_id || data.voucherId || '';
+  form.voucherProvider.value = storedNotes.meta.voucherProvider || data.voucher_provider || data.voucherProvider || '';
+  form.voucherAmount.value = storedNotes.meta.voucherAmount || data.voucher_amount || data.voucherAmount || '';
 
   form.status.value = data.status || 'Received';
-  form.notes.value = data.notes || '';
+  form.orderTakenBy.value = storedNotes.meta.orderTakenBy || data.order_taken_by || data.orderTakenBy || '';
+  form.notes.value = storedNotes.notes || '';
 
   itemCount = Math.max(3, (data.items || []).length);
 
@@ -405,6 +553,7 @@ function renderPreview(){
         <div class="total-row"><span>TAX</span><span>${money(d.tax)}</span></div>
         <div class="total-row"><span>TOTAL</span><span>${money(d.total)}</span></div>
         <div class="total-row"><span>PAYMENT</span><span>${money(d.payment)}</span></div>
+        <div class="total-row"><span>PAY TYPE</span><span>${esc(d.paymentType || '')}</span></div>
         <div class="total-row"><span>BALANCE</span><span>${money(d.balance)}</span></div>
       </div>
     </div>
@@ -425,11 +574,14 @@ async function renderDatabase(){
   const q = (searchInput.value || '').toLowerCase();
 
   databaseBody.innerHTML = '';
+  updateFilterDisplay();
 
   rows
-    .filter(x => [x.parent_name, x.phone, x.email].join(' ').toLowerCase().includes(q))
+    .filter(rowMatchesDatabaseFilter)
+    .filter(x => [x.school, x.parent_name, x.phone, x.email].join(' ').toLowerCase().includes(q))
     .forEach((x, idx) => {
       const days = daysSince(x.date_submitted || x.created_at);
+      const storedNotes = splitStoredNotes(x.notes || '');
 
       const tr = document.createElement('tr');
 
@@ -447,7 +599,7 @@ async function renderDatabase(){
         </td>
         <td><span class="badge ${ageClass(days)}">${days} days</span></td>
         <td>${esc(x.pickup_date || '')}</td>
-        <td><input class="note-input" data-index="${idx}" data-id="${x.id}" value="${esc(x.notes || '')}"></td>
+        <td><input class="note-input" data-index="${idx}" data-id="${x.id}" value="${esc(storedNotes.notes || '')}"></td>
         <td>
           <button class="edit-invoice-btn" data-id="${x.id}">
             Edit
@@ -472,9 +624,10 @@ async function renderArchivedDatabase(){
   archivedBody.innerHTML = '';
 
   rows
-    .filter(x => [x.parent_name, x.phone, x.email].join(' ').toLowerCase().includes(q))
+    .filter(x => [x.school, x.parent_name, x.phone, x.email].join(' ').toLowerCase().includes(q))
     .forEach(x => {
       const days = daysSince(x.date_submitted || x.created_at);
+      const storedNotes = splitStoredNotes(x.notes || '');
       const tr = document.createElement('tr');
 
       tr.innerHTML = `
@@ -485,7 +638,7 @@ async function renderArchivedDatabase(){
         <td>${esc(x.status || '')}</td>
         <td><span class="badge ${ageClass(days)}">${days} days</span></td>
         <td>${esc(x.pickup_date || '')}</td>
-        <td>${esc(x.notes || '')}</td>
+        <td>${esc(storedNotes.notes || '')}</td>
         <td>
           <button class="edit-invoice-btn" data-id="${x.id}">
             Edit
@@ -514,9 +667,30 @@ async function populateCustomers(){
     customerSelect.appendChild(opt);
   });
 }
+function validateInvoice(){
+  form.phone.value = formatPhoneNumber(form.phone.value);
+
+  const requiredFields = [
+    form.school,
+    form.parentLastName,
+    form.parentFirstName,
+    form.email,
+    form.phone
+  ];
+  const missingField = requiredFields.find(field => !String(field.value || '').trim());
+
+  if (missingField) {
+    missingField.focus();
+    form.reportValidity();
+    return false;
+  }
+
+  return form.reportValidity();
+}
 async function submitInvoice(){
 
   calculate();
+  if (!validateInvoice()) return;
 
   const invoiceRow = invoiceRowFromForm();
   const wasEditing = Boolean(editingInvoiceId);
@@ -568,19 +742,74 @@ function newInvoice(){
   form.discount.value = '0';
   form.tax.value = '0';
   form.payment.value = '0';
+  form.paymentType.value = '';
+  form.voucherId.value = '';
+  form.voucherProvider.value = '';
+  form.voucherAmount.value = '';
   renderCustomerHistory(null);
   setAutosaveStatus('Manual save required for new invoices.');
   calculate();
 }
 
+function switchView(view){
+  document.querySelectorAll('.tab,.view').forEach(x=>x.classList.remove('active'));
+  document.querySelector(`[data-view="${view}"]`).classList.add('active');
+  document.getElementById(view+'View').classList.add('active');
+  renderPreview();
+  renderDatabase();
+  renderArchivedDatabase();
+  renderDashboard();
+}
+
 document.querySelectorAll('.tab').forEach(btn=>btn.addEventListener('click',()=>{document.querySelectorAll('.tab,.view').forEach(x=>x.classList.remove('active'));btn.classList.add('active');document.getElementById(btn.dataset.view+'View').classList.add('active');renderPreview();renderDatabase();renderArchivedDatabase();renderDashboard();}));
+document.querySelectorAll('.filter-card').forEach(card => {
+  card.addEventListener('click', () => {
+    dashboardFilter = card.dataset.dashboardFilter;
+    renderDashboard();
+  });
+});
+if (clearDashboardFilterBtn) {
+  clearDashboardFilterBtn.addEventListener('click', () => {
+    dashboardFilter = '';
+    renderDashboard();
+  });
+}
+if (databaseFilterSelect) {
+  databaseFilterSelect.addEventListener('change', () => {
+    databaseFilter = databaseFilterSelect.value;
+    renderDatabase();
+  });
+}
+if (clearDatabaseFilterBtn) {
+  clearDatabaseFilterBtn.addEventListener('click', () => {
+    databaseFilter = '';
+    if (databaseFilterSelect) databaseFilterSelect.value = '';
+    renderDatabase();
+  });
+}
 form.addEventListener('input', queueAutosave);
+form.phone.addEventListener('input', () => {
+  const start = form.phone.selectionStart;
+  const beforeLength = form.phone.value.length;
+  form.phone.value = formatPhoneNumber(form.phone.value);
+  const lengthDelta = form.phone.value.length - beforeLength;
+  form.phone.setSelectionRange(Math.max(0, start + lengthDelta), Math.max(0, start + lengthDelta));
+});
+form.paymentType.addEventListener('change', () => {
+  if (form.paymentType.value === 'Voucher') openVoucherModal();
+  queueAutosave();
+});
 document.getElementById('submitBtn').onclick=submitInvoice;
 document.getElementById('printBtn').onclick=()=>{renderPreview();document.querySelector('[data-view="preview"]').click();setTimeout(()=>window.print(),60)};
 document.getElementById('printTopBtn').onclick=()=>{renderPreview();document.querySelector('[data-view="preview"]').click();setTimeout(()=>window.print(),60)};
 document.getElementById('newInvoiceBtn').onclick=newInvoice;
 document.getElementById('addLineBtn').onclick=()=>{const current=formData().items; itemCount++; createRows(current); calculate();};
 document.getElementById('emailBtn').onclick=()=>{const d=formData(); const subject=encodeURIComponent(`Living Word Imprints Order ${d.invoiceNumber}`); const body=encodeURIComponent(`Hi ${d.parentName||''},\n\nYour order has been received. Pickup date: ${d.pickupDate||'TBD'}.\n\nThank you,\nLiving Word Imprints`); if(d.email) location.href=`mailto:${d.email}?subject=${subject}&body=${body}`; else alert('Add customer email first.');};
+document.getElementById('voucherCancelBtn').onclick = () => closeVoucherModal();
+document.getElementById('voucherSaveBtn').onclick = () => saveVoucherModal();
+voucherModal.addEventListener('click', e => {
+  if (e.target === voucherModal) closeVoucherModal();
+});
 customerSelect.onchange = async () => {
   const rows = await getAllInvoices();
 
@@ -634,11 +863,13 @@ databaseBody.addEventListener('input', async e => {
   if (e.target.className.includes('note-input')) {
 
     const id = e.target.dataset.id;
+    const row = cachedAllInvoices.find(invoice => String(invoice.id) === String(id)) || {};
+    const storedNotes = splitStoredNotes(row.notes || '');
 
     const { error } = await supabaseClient
       .from('invoices')
       .update({
-        notes: e.target.value
+        notes: packStoredNotes(e.target.value, storedNotes.meta || {})
       })
       .eq('id', id);
 
@@ -687,6 +918,53 @@ async function setArchivedStatus(id, archived){
   await renderDashboard();
 }
 
+function openVoucherModal(){
+  voucherIdInput.value = form.voucherId.value || '';
+  voucherProviderInput.value = form.voucherProvider.value || '';
+  voucherAmountInput.value = form.voucherAmount.value || '';
+  voucherModal.hidden = false;
+  setTimeout(() => voucherIdInput.focus(), 0);
+}
+
+function closeVoucherModal(){
+  voucherModal.hidden = true;
+}
+
+function saveVoucherModal(){
+  form.voucherId.value = voucherIdInput.value.trim();
+  form.voucherProvider.value = voucherProviderInput.value.trim();
+  form.voucherAmount.value = voucherAmountInput.value;
+
+  if (form.voucherAmount.value && (!form.payment.value || Number(form.payment.value) === 0)) {
+    form.payment.value = Number(form.voucherAmount.value).toFixed(2);
+  }
+
+  form.paymentType.value = 'Voucher';
+  closeVoucherModal();
+  queueAutosave();
+}
+
+async function normalizeStoredPhoneNumbers(){
+  const rows = await getAllInvoices();
+  const updates = rows
+    .map(row => ({ row, phone: formatPhoneNumber(row.phone || '') }))
+    .filter(item => item.phone && item.phone !== item.row.phone);
+
+  for (const item of updates) {
+    const { error } = await supabaseClient
+      .from('invoices')
+      .update({ phone: item.phone })
+      .eq('id', item.row.id);
+
+    if (error) {
+      console.warn('Could not normalize saved phone number.', error);
+      return;
+    }
+  }
+
+  if (updates.length) await getAllInvoices();
+}
+
 databaseBody.addEventListener('click', async e => {
   if (e.target.className.includes('edit-invoice-btn')) {
     await loadInvoiceForEdit(e.target.dataset.id);
@@ -712,9 +990,14 @@ if (archivedBody) {
 }
 
 
-createRows();
-newInvoice();
-populateCustomers();
-renderDatabase();
-renderArchivedDatabase();
-renderDashboard();
+async function init(){
+  createRows();
+  newInvoice();
+  await normalizeStoredPhoneNumbers();
+  await populateCustomers();
+  await renderDatabase();
+  await renderArchivedDatabase();
+  await renderDashboard();
+}
+
+init();
