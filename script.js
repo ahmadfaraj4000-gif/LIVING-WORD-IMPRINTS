@@ -32,7 +32,6 @@ const dashboardIds = {
   pickupToday: document.getElementById('dashPickupToday'),
   attentionList: document.getElementById('dashboardAttentionList')
 };
-const STORAGE_KEY = 'lwi_invoices_frontend_v2';
 const INTERNAL_META_MARKER = 'LWI_INTERNAL_META:';
 const SUPABASE_URL = 'https://wwawmmnckibtamquillt.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind3YXdtbW5ja2lidGFtcXVpbGx0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg4MTk1NjEsImV4cCI6MjA5NDM5NTU2MX0.kfc9UXmvm1jfYIhW3vHaKbpEBupu1xurQxlYCKoupPY';
@@ -43,7 +42,9 @@ const supabaseClient = window.supabase.createClient(
 );
 let itemCount = 3;
 let editingInvoiceId = null;
+let editingInvoiceArchived = false;
 let autosaveTimer = null;
+const noteAutosaveTimers = new Map();
 let isAutosaving = false;
 let dashboardFilter = '';
 let databaseFilter = '';
@@ -168,7 +169,7 @@ async function getAllInvoices(){
   }
 
   cachedAllInvoices = data || [];
-  archiveCompletedOldOrders(cachedAllInvoices);
+  await archiveCompletedOldOrders(cachedAllInvoices);
   return cachedAllInvoices;
 }
 
@@ -183,21 +184,6 @@ async function getArchivedInvoices(){
   return rows.filter(row => row.archived === true);
 }
 
-async function saveInvoice(row){
-  const { data, error } = await supabaseClient
-    .from('invoices')
-    .insert([row])
-    .select()
-    .single();
-
-  if (error) {
-    console.error(error);
-    alert('Supabase save failed. Check console.');
-    return null;
-  }
-
-  return data;
-}
 async function archiveCompletedOldOrders(rows){
   const oldCompleted = rows.filter(row => {
     if (row.archived === true) return false;
@@ -217,6 +203,8 @@ async function archiveCompletedOldOrders(rows){
       console.warn('Archive skipped. Make sure the archived column exists in Supabase.', error);
       return;
     }
+
+    row.archived = true;
   }
 }
 
@@ -238,6 +226,7 @@ function sameCustomer(a, b){
 function duplicateOrder(order){
   setForm(order);
   editingInvoiceId = null;
+  editingInvoiceArchived = false;
   form.invoiceNumber.value = invoiceNo();
   form.orderDate.value = today();
   form.pickupDate.value = '';
@@ -448,7 +437,7 @@ function invoiceRowFromForm(){
 
     status: d.status || 'Received',
     notes: packStoredNotes(d.notes || '', internalMeta),
-    archived: false
+    archived: editingInvoiceId ? editingInvoiceArchived : false
   };
 }
 
@@ -539,6 +528,7 @@ function setForm(data){
   createRows(data.items || []);
 
   editingInvoiceId = data.id || null;
+  editingInvoiceArchived = data.archived === true;
 
   calculate();
   updateVoucherEditControl();
@@ -624,7 +614,7 @@ async function renderDatabase(){
   rows
     .filter(rowMatchesDatabaseFilter)
     .filter(x => [x.school, x.parent_name, x.phone, x.email].join(' ').toLowerCase().includes(q))
-    .forEach((x, idx) => {
+    .forEach(x => {
       const days = daysSince(x.date_submitted || x.created_at);
       const storedNotes = splitStoredNotes(x.notes || '');
 
@@ -636,7 +626,7 @@ async function renderDatabase(){
         <td>${esc(x.phone || '')}</td>
         <td>${esc(x.email || '')}</td>
         <td>
-          <select class="status-select" data-index="${idx}" data-id="${x.id}">
+          <select class="status-select" data-id="${x.id}">
             <option ${x.status === 'Received' ? 'selected' : ''}>Received</option>
             <option ${x.status === 'In Progress' ? 'selected' : ''}>In Progress</option>
             <option ${x.status === 'Completed' ? 'selected' : ''}>Completed</option>
@@ -646,7 +636,7 @@ async function renderDatabase(){
         <td>${voucherRecallButton(x, storedNotes)}</td>
         <td><span class="badge ${ageClass(days)}">${days} days</span></td>
         <td>${esc(x.pickup_date || '')}</td>
-        <td><input class="note-input" data-index="${idx}" data-id="${x.id}" value="${esc(storedNotes.notes || '')}"></td>
+        <td><input class="note-input" data-id="${x.id}" value="${esc(storedNotes.notes || '')}"></td>
         <td>
           <button class="edit-invoice-btn" data-id="${x.id}">
             Edit
@@ -745,6 +735,7 @@ async function submitInvoice(){
   const wasEditing = Boolean(editingInvoiceId);
 
   let error;
+  let savedInvoice = null;
 
   if (editingInvoiceId) {
 
@@ -759,9 +750,12 @@ async function submitInvoice(){
 
     const result = await supabaseClient
       .from('invoices')
-      .insert([invoiceRow]);
+      .insert([invoiceRow])
+      .select('id, archived')
+      .single();
 
     error = result.error;
+    savedInvoice = result.data;
   }
 
   if (error) {
@@ -770,12 +764,16 @@ async function submitInvoice(){
     return;
   }
 
-  if (!wasEditing) editingInvoiceId = null;
+  if (!wasEditing && savedInvoice) {
+    editingInvoiceId = savedInvoice.id;
+    editingInvoiceArchived = savedInvoice.archived === true;
+  }
 
-  setAutosaveStatus(wasEditing ? 'Saved manually. Autosave still on.' : 'Invoice saved. Manual save required for new invoices.', wasEditing ? 'saved' : '');
+  setAutosaveStatus(wasEditing ? 'Saved manually. Autosave still on.' : 'Invoice saved. Autosave is on for this invoice.', 'saved');
 
   await populateCustomers();
   await renderDatabase();
+  await renderArchivedDatabase();
   await renderDashboard();
 
   alert('Invoice saved successfully.');
@@ -783,6 +781,7 @@ async function submitInvoice(){
 function newInvoice(){
   form.reset();
   editingInvoiceId = null;
+  editingInvoiceArchived = false;
   itemCount = 3;
   createRows();
   form.orderDate.value = today();
@@ -799,16 +798,6 @@ function newInvoice(){
   setAutosaveStatus('Manual save required for new invoices.');
   calculate();
   updateVoucherEditControl();
-}
-
-function switchView(view){
-  document.querySelectorAll('.tab,.view').forEach(x=>x.classList.remove('active'));
-  document.querySelector(`[data-view="${view}"]`).classList.add('active');
-  document.getElementById(view+'View').classList.add('active');
-  renderPreview();
-  renderDatabase();
-  renderArchivedDatabase();
-  renderDashboard();
 }
 
 document.querySelectorAll('.tab').forEach(btn=>btn.addEventListener('click',()=>{document.querySelectorAll('.tab,.view').forEach(x=>x.classList.remove('active'));btn.classList.add('active');document.getElementById(btn.dataset.view+'View').classList.add('active');renderPreview();renderDatabase();renderArchivedDatabase();renderDashboard();}));
@@ -846,7 +835,13 @@ form.phone.addEventListener('input', () => {
   form.phone.setSelectionRange(Math.max(0, start + lengthDelta), Math.max(0, start + lengthDelta));
 });
 form.paymentType.addEventListener('change', () => {
-  if (form.paymentType.value === 'Voucher') openVoucherModal();
+  if (form.paymentType.value === 'Voucher') {
+    openVoucherModal();
+  } else {
+    form.voucherId.value = '';
+    form.voucherProvider.value = '';
+    form.voucherAmount.value = '';
+  }
   updateVoucherEditControl();
   queueAutosave();
 });
@@ -876,6 +871,7 @@ customerSelect.onchange = async () => {
     // The Edit button in the database is still used when Hermin wants to edit an old saved invoice.
     setForm(selected);
     editingInvoiceId = null;
+    editingInvoiceArchived = false;
     form.invoiceNumber.value = invoiceNo();
     form.orderDate.value = today();
     form.pickupDate.value = '';
@@ -892,7 +888,7 @@ searchInput.addEventListener('input', renderDatabase);
 if (archivedSearchInput) archivedSearchInput.addEventListener('input', renderArchivedDatabase);
 databaseBody.addEventListener('change', async e => {
 
-  if (e.target.className.includes('status-select')) {
+  if (e.target.classList.contains('status-select')) {
 
     const id = e.target.dataset.id;
 
@@ -909,30 +905,39 @@ databaseBody.addEventListener('change', async e => {
       return;
     }
 
-    await renderDashboard();
+    await renderDatabase();
     await renderArchivedDatabase();
+    await renderDashboard();
   }
 });
 
 databaseBody.addEventListener('input', async e => {
 
-  if (e.target.className.includes('note-input')) {
+  if (e.target.classList.contains('note-input')) {
 
     const id = e.target.dataset.id;
     const row = cachedAllInvoices.find(invoice => String(invoice.id) === String(id)) || {};
     const storedNotes = splitStoredNotes(row.notes || '');
+    const nextNotes = packStoredNotes(e.target.value, storedNotes.meta || {});
 
-    const { error } = await supabaseClient
-      .from('invoices')
-      .update({
-        notes: packStoredNotes(e.target.value, storedNotes.meta || {})
-      })
-      .eq('id', id);
+    clearTimeout(noteAutosaveTimers.get(id));
+    noteAutosaveTimers.set(id, setTimeout(async () => {
+      const { error } = await supabaseClient
+        .from('invoices')
+        .update({
+          notes: nextNotes
+        })
+        .eq('id', id);
 
-    if (error) {
-      console.error(error);
-      alert('Failed to update notes');
-    }
+      if (error) {
+        console.error(error);
+        alert('Failed to update notes');
+        return;
+      }
+
+      row.notes = nextNotes;
+      noteAutosaveTimers.delete(id);
+    }, 600));
   }
 });
 
@@ -972,6 +977,10 @@ async function setArchivedStatus(id, archived){
   await renderDatabase();
   await renderArchivedDatabase();
   await renderDashboard();
+
+  if (String(editingInvoiceId) === String(id)) {
+    editingInvoiceArchived = archived;
+  }
 }
 
 function openVoucherModal(){
@@ -1023,36 +1032,36 @@ async function normalizeStoredPhoneNumbers(){
 }
 
 databaseBody.addEventListener('click', async e => {
-  if (e.target.className.includes('voucher-details-btn')) {
+  if (e.target.classList.contains('voucher-details-btn')) {
     const row = cachedAllInvoices.find(invoice => String(invoice.id) === String(e.target.dataset.id)) || {};
     showVoucherDetails(row);
     return;
   }
 
-  if (e.target.className.includes('edit-invoice-btn')) {
+  if (e.target.classList.contains('edit-invoice-btn')) {
     await loadInvoiceForEdit(e.target.dataset.id);
     return;
   }
 
-  if (e.target.className.includes('archive-invoice-btn')) {
+  if (e.target.classList.contains('archive-invoice-btn')) {
     await setArchivedStatus(e.target.dataset.id, true);
   }
 });
 
 if (archivedBody) {
   archivedBody.addEventListener('click', async e => {
-    if (e.target.className.includes('voucher-details-btn')) {
+    if (e.target.classList.contains('voucher-details-btn')) {
       const row = cachedAllInvoices.find(invoice => String(invoice.id) === String(e.target.dataset.id)) || {};
       showVoucherDetails(row);
       return;
     }
 
-    if (e.target.className.includes('edit-invoice-btn')) {
+    if (e.target.classList.contains('edit-invoice-btn')) {
       await loadInvoiceForEdit(e.target.dataset.id);
       return;
     }
 
-    if (e.target.className.includes('restore-invoice-btn')) {
+    if (e.target.classList.contains('restore-invoice-btn')) {
       await setArchivedStatus(e.target.dataset.id, false);
     }
   });
