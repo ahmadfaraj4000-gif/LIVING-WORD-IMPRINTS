@@ -115,13 +115,14 @@
             <label>Balance<input name="balance" readonly></label>
           </div>
           <div class="form-grid two payment-grid">
-            <label>Payment Type
+            <label class="payment-type-field">Payment Type
               <select name="paymentType">
                 <option value="">Select payment type...</option>
                 <option value="Card">Card</option>
                 <option value="Cash">Cash</option>
                 <option value="Voucher">Voucher</option>
               </select>
+              <button class="ghost voucher-edit-control" id="editVoucherBtn" type="button" hidden>View / Edit Voucher</button>
             </label>
             <input name="voucherId" type="hidden">
             <input name="voucherProvider" type="hidden">
@@ -164,7 +165,7 @@
         </div>
         <div class="table-wrap">
           <table class="db-table">
-            <thead><tr><th>Invoice</th><th>Parent</th><th>Phone</th><th>Email</th><th>Status</th><th>Payment Type</th><th>Days</th><th>Pickup</th><th>Notes</th><th>Edit</th><th>Archive</th></tr></thead>
+            <thead><tr><th>Invoice</th><th>Parent</th><th>Phone</th><th>Email</th><th>Status</th><th>Payment Type</th><th>Voucher</th><th>Days</th><th>Pickup</th><th>Notes</th><th>Edit</th><th>Archive</th></tr></thead>
             <tbody id="databaseBody"></tbody>
           </table>
         </div>
@@ -177,7 +178,7 @@
         </div>
         <div class="table-wrap">
           <table class="db-table">
-            <thead><tr><th>Invoice</th><th>Parent</th><th>Phone</th><th>Email</th><th>Status</th><th>Payment Type</th><th>Days</th><th>Pickup</th><th>Notes</th><th>Edit</th><th>Restore</th></tr></thead>
+            <thead><tr><th>Invoice</th><th>Parent</th><th>Phone</th><th>Email</th><th>Status</th><th>Payment Type</th><th>Voucher</th><th>Days</th><th>Pickup</th><th>Notes</th><th>Edit</th><th>Restore</th></tr></thead>
             <tbody id="archivedBody"></tbody>
           </table>
         </div>
@@ -200,6 +201,33 @@
       <div class="modal-actions">
         <button class="ghost" id="voucherCancelBtn" type="button">Cancel</button>
         <button class="primary" id="voucherSaveBtn" type="button">Save Voucher</button>
+      </div>
+    </div>
+  </div>
+  <div class="modal-backdrop no-print" id="voucherDetailsModal" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="voucherDetailsTitle">
+      <div class="modal-head">
+        <div>
+          <h2 id="voucherDetailsTitle">Voucher Details</h2>
+          <p>Saved payment information for this order.</p>
+        </div>
+      </div>
+      <div class="voucher-detail-list">
+        <div class="voucher-detail-row">
+          <span>Voucher ID</span>
+          <strong id="voucherDetailsId">Not entered</strong>
+        </div>
+        <div class="voucher-detail-row">
+          <span>Provider</span>
+          <strong id="voucherDetailsProvider">Not entered</strong>
+        </div>
+        <div class="voucher-detail-row">
+          <span>Amount</span>
+          <strong id="voucherDetailsAmount">Not entered</strong>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="primary" id="voucherDetailsCloseBtn" type="button">Close</button>
       </div>
     </div>
   </div>

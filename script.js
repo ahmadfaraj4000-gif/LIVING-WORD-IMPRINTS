@@ -18,6 +18,11 @@ const voucherModal = document.getElementById('voucherModal');
 const voucherIdInput = document.getElementById('voucherIdInput');
 const voucherProviderInput = document.getElementById('voucherProviderInput');
 const voucherAmountInput = document.getElementById('voucherAmountInput');
+const editVoucherBtn = document.getElementById('editVoucherBtn');
+const voucherDetailsModal = document.getElementById('voucherDetailsModal');
+const voucherDetailsId = document.getElementById('voucherDetailsId');
+const voucherDetailsProvider = document.getElementById('voucherDetailsProvider');
+const voucherDetailsAmount = document.getElementById('voucherDetailsAmount');
 const dashboardIds = {
   dueToday: document.getElementById('dashDueToday'),
   lateOrders: document.getElementById('dashLateOrders'),
@@ -47,6 +52,41 @@ function money(n){return `$${(Number(n)||0).toFixed(2)}`}
 function today(){return new Date().toISOString().slice(0,10)}
 function invoiceNo(){return String(Date.now()).slice(-6)}
 function esc(v){return String(v ?? '').replace(/[&<>"]/g, s=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[s]))}
+function voucherDetailsFromRow(row, storedNotes = splitStoredNotes(row.notes || '')){
+  return {
+    paymentType: storedNotes.meta.paymentType || row.payment_type || '',
+    id: storedNotes.meta.voucherId || row.voucher_id || '',
+    provider: storedNotes.meta.voucherProvider || row.voucher_provider || '',
+    amount: storedNotes.meta.voucherAmount || row.voucher_amount || ''
+  };
+}
+function voucherRecallButton(row, storedNotes){
+  const details = voucherDetailsFromRow(row, storedNotes);
+  if (details.paymentType !== 'Voucher' && !details.id && !details.provider && !details.amount) return '';
+  return `<button class="voucher-details-btn" data-id="${esc(row.id)}" type="button">View</button>`;
+}
+function showVoucherDetails(row){
+  const details = voucherDetailsFromRow(row);
+  voucherDetailsId.textContent = details.id || 'Not entered';
+  voucherDetailsProvider.textContent = details.provider || 'Not entered';
+  voucherDetailsAmount.textContent = details.amount ? money(details.amount) : 'Not entered';
+  voucherDetailsModal.hidden = false;
+}
+function closeVoucherDetails(){
+  voucherDetailsModal.hidden = true;
+}
+function hasVoucherDetails(){
+  return Boolean(
+    form.paymentType.value === 'Voucher' ||
+    form.voucherId.value ||
+    form.voucherProvider.value ||
+    form.voucherAmount.value
+  );
+}
+function updateVoucherEditControl(){
+  if (!editVoucherBtn) return;
+  editVoucherBtn.hidden = !hasVoucherDetails();
+}
 function formatParentName(lastName, firstName){
   const last = String(lastName || '').trim();
   const first = String(firstName || '').trim();
@@ -401,6 +441,9 @@ function invoiceRowFromForm(){
     total: Number(d.total) || 0,
     payment: Number(d.payment) || 0,
     payment_type: d.paymentType || '',
+    voucher_id: d.voucherId || '',
+    voucher_provider: d.voucherProvider || '',
+    voucher_amount: Number(d.voucherAmount) || 0,
     balance: Number(d.balance) || 0,
 
     status: d.status || 'Received',
@@ -498,6 +541,7 @@ function setForm(data){
   editingInvoiceId = data.id || null;
 
   calculate();
+  updateVoucherEditControl();
 }
 function calculate(){
   let subtotal=0;
@@ -599,6 +643,7 @@ async function renderDatabase(){
           </select>
         </td>
         <td>${esc(storedNotes.meta.paymentType || x.payment_type || '')}</td>
+        <td>${voucherRecallButton(x, storedNotes)}</td>
         <td><span class="badge ${ageClass(days)}">${days} days</span></td>
         <td>${esc(x.pickup_date || '')}</td>
         <td><input class="note-input" data-index="${idx}" data-id="${x.id}" value="${esc(storedNotes.notes || '')}"></td>
@@ -639,6 +684,7 @@ async function renderArchivedDatabase(){
         <td>${esc(x.email || '')}</td>
         <td>${esc(x.status || '')}</td>
         <td>${esc(storedNotes.meta.paymentType || x.payment_type || '')}</td>
+        <td>${voucherRecallButton(x, storedNotes)}</td>
         <td><span class="badge ${ageClass(days)}">${days} days</span></td>
         <td>${esc(x.pickup_date || '')}</td>
         <td>${esc(storedNotes.notes || '')}</td>
@@ -752,6 +798,7 @@ function newInvoice(){
   renderCustomerHistory(null);
   setAutosaveStatus('Manual save required for new invoices.');
   calculate();
+  updateVoucherEditControl();
 }
 
 function switchView(view){
@@ -800,6 +847,7 @@ form.phone.addEventListener('input', () => {
 });
 form.paymentType.addEventListener('change', () => {
   if (form.paymentType.value === 'Voucher') openVoucherModal();
+  updateVoucherEditControl();
   queueAutosave();
 });
 document.getElementById('submitBtn').onclick=submitInvoice;
@@ -810,8 +858,13 @@ document.getElementById('addLineBtn').onclick=()=>{const current=formData().item
 document.getElementById('emailBtn').onclick=()=>{const d=formData(); const subject=encodeURIComponent(`Living Word Imprints Order ${d.invoiceNumber}`); const body=encodeURIComponent(`Hi ${d.parentName||''},\n\nYour order has been received. Pickup date: ${d.pickupDate||'TBD'}.\n\nThank you,\nLiving Word Imprints`); if(d.email) location.href=`mailto:${d.email}?subject=${subject}&body=${body}`; else alert('Add customer email first.');};
 document.getElementById('voucherCancelBtn').onclick = () => closeVoucherModal();
 document.getElementById('voucherSaveBtn').onclick = () => saveVoucherModal();
+editVoucherBtn.onclick = () => openVoucherModal();
 voucherModal.addEventListener('click', e => {
   if (e.target === voucherModal) closeVoucherModal();
+});
+document.getElementById('voucherDetailsCloseBtn').onclick = () => closeVoucherDetails();
+voucherDetailsModal.addEventListener('click', e => {
+  if (e.target === voucherDetailsModal) closeVoucherDetails();
 });
 customerSelect.onchange = async () => {
   const rows = await getAllInvoices();
@@ -943,6 +996,7 @@ function saveVoucherModal(){
   }
 
   form.paymentType.value = 'Voucher';
+  updateVoucherEditControl();
   closeVoucherModal();
   queueAutosave();
 }
@@ -969,6 +1023,12 @@ async function normalizeStoredPhoneNumbers(){
 }
 
 databaseBody.addEventListener('click', async e => {
+  if (e.target.className.includes('voucher-details-btn')) {
+    const row = cachedAllInvoices.find(invoice => String(invoice.id) === String(e.target.dataset.id)) || {};
+    showVoucherDetails(row);
+    return;
+  }
+
   if (e.target.className.includes('edit-invoice-btn')) {
     await loadInvoiceForEdit(e.target.dataset.id);
     return;
@@ -981,6 +1041,12 @@ databaseBody.addEventListener('click', async e => {
 
 if (archivedBody) {
   archivedBody.addEventListener('click', async e => {
+    if (e.target.className.includes('voucher-details-btn')) {
+      const row = cachedAllInvoices.find(invoice => String(invoice.id) === String(e.target.dataset.id)) || {};
+      showVoucherDetails(row);
+      return;
+    }
+
     if (e.target.className.includes('edit-invoice-btn')) {
       await loadInvoiceForEdit(e.target.dataset.id);
       return;
