@@ -949,6 +949,33 @@ button {
 	border-radius: 8px
 }
 
+.database-filters {
+	align-items: end;
+	background: #fff;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 14px;
+	padding: 0 18px 16px
+}
+
+.database-filters label {
+	display: grid;
+	font-size: 13px;
+	font-weight: 800;
+	gap: 6px;
+	min-width: min(240px, 100%)
+}
+
+.database-filters select {
+	background: #fff;
+	border: 1px solid #ccc;
+	border-radius: 8px;
+	font: inherit;
+	font-weight: 400;
+	padding: 11px;
+	width: 100%
+}
+
 .table-wrap {
 	overflow: auto;
 	background: #fff
@@ -1001,6 +1028,12 @@ button {
 	color: #111;
 	padding: 8px 10px;
 	white-space: nowrap
+}
+
+.payment-voucher-btn {
+	color: var(--purple);
+	text-decoration: underline;
+	text-underline-offset: 2px
 }
 
 /* Dashboard + Customer History Add-ons */

@@ -12,6 +12,7 @@ const activeDatabaseFilter = document.getElementById('activeDatabaseFilter');
 const activeDatabaseFilterText = document.getElementById('activeDatabaseFilterText');
 const clearDatabaseFilterBtn = document.getElementById('clearDatabaseFilterBtn');
 const databaseFilterSelect = document.getElementById('databaseFilterSelect');
+const databaseSchoolSelect = document.getElementById('databaseSchoolSelect');
 const dashboardPanelTitle = document.getElementById('dashboardPanelTitle');
 const clearDashboardFilterBtn = document.getElementById('clearDashboardFilterBtn');
 const voucherModal = document.getElementById('voucherModal');
@@ -65,6 +66,7 @@ const noteAutosaveTimers = new Map();
 let isAutosaving = false;
 let dashboardFilter = '';
 let databaseFilter = '';
+let databaseSchoolFilter = '';
 let inventoryItems = [];
 let inventoryBackendAvailable = true;
 let inventoryShowReorderOnly = false;
@@ -235,10 +237,11 @@ function voucherDetailsFromRow(row, storedNotes = splitStoredNotes(row.notes || 
     amount: storedNotes.meta.voucherAmount || row.voucher_amount || ''
   };
 }
-function voucherRecallButton(row, storedNotes){
+function paymentTypeCell(row, storedNotes){
   const details = voucherDetailsFromRow(row, storedNotes);
-  if (details.paymentType !== 'Voucher' && !details.id && !details.provider && !details.amount) return '';
-  return `<button class="voucher-details-btn" data-id="${esc(row.id)}" type="button">View</button>`;
+  if (details.paymentType !== 'Voucher') return esc(details.paymentType);
+  if (!details.id && !details.provider && !details.amount) return 'Voucher';
+  return `<button class="voucher-details-btn payment-voucher-btn" data-id="${esc(row.id)}" type="button">Voucher</button>`;
 }
 function showVoucherDetails(row){
   const details = voucherDetailsFromRow(row);
@@ -518,22 +521,49 @@ function rowMatchesOrderFilter(row, filter){
 }
 
 function rowMatchesDatabaseFilter(row){
-  return rowMatchesOrderFilter(row, databaseFilter);
+  const schoolMatches = !databaseSchoolFilter || normalizedText(row.school) === normalizedText(databaseSchoolFilter);
+  return schoolMatches && rowMatchesOrderFilter(row, databaseFilter);
 }
 
 function updateFilterDisplay(){
   if (!activeDatabaseFilter || !activeDatabaseFilterText) return;
 
-  if (!databaseFilter) {
+  if (!databaseFilter && !databaseSchoolFilter) {
     activeDatabaseFilter.hidden = true;
     activeDatabaseFilterText.textContent = '';
     if (databaseFilterSelect) databaseFilterSelect.value = '';
+    if (databaseSchoolSelect) databaseSchoolSelect.value = '';
     return;
   }
 
   activeDatabaseFilter.hidden = false;
-  activeDatabaseFilterText.textContent = `Showing: ${databaseFilterLabels[databaseFilter] || 'Filtered Orders'}`;
+  const labels = [];
+  if (databaseFilter) labels.push(databaseFilterLabels[databaseFilter] || 'Filtered Orders');
+  if (databaseSchoolFilter) labels.push(databaseSchoolFilter);
+  activeDatabaseFilterText.textContent = `Showing: ${labels.join(' / ')}`;
   if (databaseFilterSelect) databaseFilterSelect.value = databaseFilter;
+  if (databaseSchoolSelect) databaseSchoolSelect.value = databaseSchoolFilter;
+}
+
+function populateDatabaseSchools(rows){
+  if (!databaseSchoolSelect) return;
+
+  const selected = databaseSchoolFilter;
+  const schools = [...new Set(rows
+    .map(row => String(row.school || '').trim())
+    .filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b));
+
+  databaseSchoolSelect.innerHTML = '<option value="">All Schools</option>';
+  schools.forEach(school => {
+    const option = document.createElement('option');
+    option.value = school;
+    option.textContent = school;
+    databaseSchoolSelect.appendChild(option);
+  });
+
+  databaseSchoolSelect.value = schools.includes(selected) ? selected : '';
+  if (selected && databaseSchoolSelect.value !== selected) databaseSchoolFilter = '';
 }
 
 function refreshInventoryDatalists(){
@@ -890,6 +920,7 @@ async function renderDatabase(){
   const q = (searchInput.value || '').toLowerCase();
 
   databaseBody.innerHTML = '';
+  populateDatabaseSchools(rows);
   updateFilterDisplay();
 
   rows
@@ -913,8 +944,7 @@ async function renderDatabase(){
             <option ${x.status === 'Completed' ? 'selected' : ''}>Completed</option>
           </select>
         </td>
-        <td>${esc(storedNotes.meta.paymentType || x.payment_type || '')}</td>
-        <td>${voucherRecallButton(x, storedNotes)}</td>
+        <td>${paymentTypeCell(x, storedNotes)}</td>
         <td><span class="badge ${ageClass(days)}">${days} days</span></td>
         <td>${esc(x.pickup_date || '')}</td>
         <td><input class="note-input" data-id="${x.id}" value="${esc(storedNotes.notes || '')}"></td>
@@ -954,8 +984,7 @@ async function renderArchivedDatabase(){
         <td>${esc(x.phone || '')}</td>
         <td>${esc(x.email || '')}</td>
         <td>${esc(x.status || '')}</td>
-        <td>${esc(storedNotes.meta.paymentType || x.payment_type || '')}</td>
-        <td>${voucherRecallButton(x, storedNotes)}</td>
+        <td>${paymentTypeCell(x, storedNotes)}</td>
         <td><span class="badge ${ageClass(days)}">${days} days</span></td>
         <td>${esc(x.pickup_date || '')}</td>
         <td>${esc(storedNotes.notes || '')}</td>
@@ -1498,10 +1527,18 @@ if (databaseFilterSelect) {
     renderDatabase();
   });
 }
+if (databaseSchoolSelect) {
+  databaseSchoolSelect.addEventListener('change', () => {
+    databaseSchoolFilter = databaseSchoolSelect.value;
+    renderDatabase();
+  });
+}
 if (clearDatabaseFilterBtn) {
   clearDatabaseFilterBtn.addEventListener('click', () => {
     databaseFilter = '';
+    databaseSchoolFilter = '';
     if (databaseFilterSelect) databaseFilterSelect.value = '';
+    if (databaseSchoolSelect) databaseSchoolSelect.value = '';
     renderDatabase();
   });
 }
