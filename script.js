@@ -1,4 +1,13 @@
 const form = document.getElementById('invoiceForm');
+const authView = document.getElementById('authView');
+const siteHeader = document.getElementById('siteHeader');
+const appShell = document.getElementById('appShell');
+const adminLoginForm = document.getElementById('adminLoginForm');
+const adminUsername = document.getElementById('adminUsername');
+const adminPassword = document.getElementById('adminPassword');
+const adminLoginBtn = document.getElementById('adminLoginBtn');
+const adminLoginError = document.getElementById('adminLoginError');
+const logoutBtn = document.getElementById('logoutBtn');
 const itemsEditor = document.getElementById('itemsEditor');
 const previewPaper = document.getElementById('previewPaper');
 const databaseBody = document.getElementById('databaseBody');
@@ -51,6 +60,8 @@ const dashboardIds = {
   attentionList: document.getElementById('dashboardAttentionList')
 };
 const INTERNAL_META_MARKER = 'LWI_INTERNAL_META:';
+const ADMIN_USERNAME = 'livingwordimprints';
+const ADMIN_AUTH_EMAIL = 'lwimprints@gmail.com';
 const SUPABASE_URL = 'https://wwawmmnckibtamquillt.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind3YXdtbW5ja2lidGFtcXVpbGx0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg4MTk1NjEsImV4cCI6MjA5NDM5NTU2MX0.kfc9UXmvm1jfYIhW3vHaKbpEBupu1xurQxlYCKoupPY';
 
@@ -73,6 +84,7 @@ let inventoryShowReorderOnly = false;
 let inventorySaveTimer = null;
 let selectedInventoryIds = new Set();
 let stockAdjustmentsByInvoice = new Map();
+let appInitialized = false;
 const INVENTORY_STORAGE_KEY = 'lwi_inventory_items_v1';
 const INVENTORY_DELETED_KEY = 'lwi_inventory_deleted_products_v1';
 const STOCK_META_KEY = 'stockAdjustments';
@@ -120,6 +132,22 @@ function setInventoryStatus(message, state = ''){
   inventorySaveStatus.textContent = message;
   inventorySaveStatus.className = 'autosave-status';
   if (state) inventorySaveStatus.classList.add(state);
+}
+function setLoginError(message = ''){
+  if (!adminLoginError) return;
+  adminLoginError.textContent = message;
+  adminLoginError.hidden = !message;
+}
+function setAuthScreen(session){
+  const signedIn = Boolean(session);
+  if (authView) authView.hidden = signedIn;
+  if (siteHeader) siteHeader.hidden = !signedIn;
+  if (appShell) appShell.hidden = !signedIn;
+  if (!signedIn) {
+    setLoginError('');
+    if (adminPassword) adminPassword.value = '';
+    setTimeout(() => adminUsername?.focus(), 0);
+  }
 }
 function parseCsv(text){
   const rows = [];
@@ -1867,6 +1895,49 @@ async function normalizeStoredPhoneNumbers(){
   if (updates.length) await getAllInvoices();
 }
 
+async function submitAdminLogin(event){
+  event.preventDefault();
+
+  const username = String(adminUsername?.value || '').trim();
+  const password = adminPassword?.value || '';
+
+  if (normalizedText(username) !== ADMIN_USERNAME) {
+    setLoginError('Incorrect username or password.');
+    return;
+  }
+
+  if (adminLoginBtn) adminLoginBtn.disabled = true;
+  setLoginError('');
+
+  const { data, error } = await supabaseClient.auth.signInWithPassword({
+    email: ADMIN_AUTH_EMAIL,
+    password
+  });
+
+  if (adminLoginBtn) adminLoginBtn.disabled = false;
+
+  if (error || !data.session) {
+    console.error(error);
+    setLoginError('Incorrect username or password.');
+    adminPassword?.focus();
+    return;
+  }
+
+  if (adminPassword) adminPassword.value = '';
+  await handleAuthSession(data.session);
+}
+
+async function signOutAdmin(){
+  const { error } = await supabaseClient.auth.signOut();
+  if (error) {
+    console.error(error);
+    setAutosaveStatus('Log out failed. Try again.', 'error');
+    return;
+  }
+
+  handleAuthSession(null);
+}
+
 databaseBody.addEventListener('click', async e => {
   if (e.target.classList.contains('voucher-details-btn')) {
     const row = cachedAllInvoices.find(invoice => String(invoice.id) === String(e.target.dataset.id)) || {};
@@ -1915,4 +1986,21 @@ async function init(){
   await renderDashboard();
 }
 
-init();
+async function handleAuthSession(session){
+  setAuthScreen(session);
+  if (!session || appInitialized) return;
+
+  appInitialized = true;
+  await init();
+}
+
+if (adminLoginForm) adminLoginForm.addEventListener('submit', submitAdminLogin);
+if (logoutBtn) logoutBtn.addEventListener('click', signOutAdmin);
+
+supabaseClient.auth.onAuthStateChange((event, session) => {
+  setTimeout(() => {
+    handleAuthSession(session);
+  }, 0);
+});
+
+supabaseClient.auth.getSession().then(({ data }) => handleAuthSession(data.session));

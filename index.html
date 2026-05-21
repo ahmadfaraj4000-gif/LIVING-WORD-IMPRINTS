@@ -7,17 +7,34 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <header class="site-header no-print">
+  <main class="auth-shell no-print" id="authView">
+    <section class="auth-card" aria-labelledby="authTitle">
+      <img src="assets/logo.png" alt="Living Word Imprints" class="auth-logo" />
+      <div class="auth-head">
+        <h1 id="authTitle">Admin Login</h1>
+        <p>Sign in to manage invoices and inventory.</p>
+      </div>
+      <form id="adminLoginForm" class="auth-form">
+        <label>Username<input id="adminUsername" autocomplete="username" required></label>
+        <label>Password<input id="adminPassword" type="password" autocomplete="current-password" required></label>
+        <button class="primary" id="adminLoginBtn" type="submit">Log In</button>
+      </form>
+      <p class="auth-error" id="adminLoginError" hidden></p>
+    </section>
+  </main>
+
+  <header class="site-header no-print" id="siteHeader" hidden>
     <div class="wrap header-inner">
       <img src="assets/logo.png" alt="Living Word Imprints" class="logo" />
       <div class="header-actions">
         <button class="ghost" id="newInvoiceBtn" type="button">New Invoice</button>
         <button class="primary" id="printTopBtn" type="button">Print / PDF</button>
+        <button class="ghost" id="logoutBtn" type="button">Log Out</button>
       </div>
     </div>
   </header>
 
-  <main class="wrap app-shell">
+  <main class="wrap app-shell" id="appShell" hidden>
     <aside class="panel no-print">
       <h2>Invoice Controls</h2>
       <div class="tabs">
