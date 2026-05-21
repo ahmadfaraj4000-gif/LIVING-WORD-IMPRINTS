@@ -869,7 +869,7 @@ function renderPreview(){
   const d=formData();
   const previewItems = [...d.items];
   while (previewItems.length < 10) previewItems.push({amount:'',description:'',color:'',size:'',price:'',line:''});
-  const rows=previewItems.map(x=>`<tr><td>${esc(x.amount)}</td><td>${esc(x.description)}</td><td>${esc(x.color)}</td><td>${esc(x.size)}</td><td>${x.price?money(x.price):''}</td><td>${x.line?money(x.line):''}</td></tr>`).join('');
+  const rows=previewItems.map(x=>`<tr><td><span class="printed-entry">${esc(x.amount)}</span></td><td><span class="printed-entry">${esc(x.description)}</span></td><td><span class="printed-entry">${esc(x.color)}</span></td><td><span class="printed-entry">${esc(x.size)}</span></td><td><span class="printed-entry">${x.price?money(x.price):''}</span></td><td><span class="printed-entry">${x.line?money(x.line):''}</span></td></tr>`).join('');
   previewPaper.innerHTML=`
     <div class="invoice-top">
       <div class="left-top">
@@ -884,14 +884,14 @@ function renderPreview(){
         </div>
       </div>
       <div class="customer-card">
-        <div class="date-row"><div class="date-box"><strong>DATE</strong> ${esc(d.orderDate||'____/____/____')}</div><div class="num-box"><strong>${esc(d.invoiceNumber||'')}</strong></div></div>
-        <div class="preview-line">SCHOOL ${esc(d.school)}</div>
-        <div class="preview-line">PARENT ${esc(d.parentName)}</div>
-        <div class="preview-line">STUDENT ${esc(d.studentName)}</div>
-        <div class="preview-line split"><span>ADDRESS ${esc(d.address)}</span><span>APT ${esc(d.apt)}</span></div>
-        <div class="preview-line split"><span>CITY ${esc(d.city)}</span><span>ZIP ${esc(d.zip)}</span></div>
-        <div class="preview-line">PHONE ${esc(d.phone)}</div>
-        <div class="preview-line">EMAIL ${esc(d.email)}</div>
+        <div class="date-row"><div class="date-box"><strong>DATE</strong> <span class="printed-entry">${esc(d.orderDate||'____/____/____')}</span></div><div class="num-box"><strong class="printed-entry">${esc(d.invoiceNumber||'')}</strong></div></div>
+        <div class="preview-line">SCHOOL <span class="printed-entry">${esc(d.school)}</span></div>
+        <div class="preview-line">PARENT <span class="printed-entry">${esc(d.parentName)}</span></div>
+        <div class="preview-line">STUDENT <span class="printed-entry">${esc(d.studentName)}</span></div>
+        <div class="preview-line split"><span>ADDRESS <span class="printed-entry">${esc(d.address)}</span></span><span>APT <span class="printed-entry">${esc(d.apt)}</span></span></div>
+        <div class="preview-line split"><span>CITY <span class="printed-entry">${esc(d.city)}</span></span><span>ZIP <span class="printed-entry">${esc(d.zip)}</span></span></div>
+        <div class="preview-line">PHONE <span class="printed-entry">${esc(d.phone)}</span></div>
+        <div class="preview-line">EMAIL <span class="printed-entry">${esc(d.email)}</span></div>
         <div class="email-check"><span class="fakebox">${d.emailList?'✓':''}</span><span>Please add me to your e-mail list<br>for sales and special offers</span></div>
       </div>
     </div>
@@ -899,13 +899,13 @@ function renderPreview(){
     <div class="middle-bottom">
       <div class="thank-you"><h2>Thank You for your order</h2><p><em>If you are happy with our products and services, please let others know by giving us a review. If not, please tell us.</em></p></div>
       <div class="totals">
-        <div class="total-row"><span>SUB TOTAL</span><span>${money(d.subtotal)}</span></div>
-        <div class="total-row"><span>DISCOUNT</span><span>${money(d.discount)}</span></div>
-        <div class="total-row"><span>TAX</span><span>${money(d.tax)}</span></div>
-        <div class="total-row"><span>TOTAL</span><span>${money(d.total)}</span></div>
-        <div class="total-row"><span>PAYMENT</span><span>${money(d.payment)}</span></div>
-        <div class="total-row"><span>PAY TYPE</span><span>${esc(d.paymentType || '')}</span></div>
-        <div class="total-row"><span>BALANCE</span><span>${money(d.balance)}</span></div>
+        <div class="total-row"><span>SUB TOTAL</span><span class="printed-entry">${money(d.subtotal)}</span></div>
+        <div class="total-row"><span>DISCOUNT</span><span class="printed-entry">${money(d.discount)}</span></div>
+        <div class="total-row"><span>TAX</span><span class="printed-entry">${money(d.tax)}</span></div>
+        <div class="total-row"><span>TOTAL</span><span class="printed-entry">${money(d.total)}</span></div>
+        <div class="total-row"><span>PAYMENT</span><span class="printed-entry">${money(d.payment)}</span></div>
+        <div class="total-row"><span>PAY TYPE</span><span class="printed-entry">${esc(d.paymentType || '')}</span></div>
+        <div class="total-row"><span>BALANCE</span><span class="printed-entry">${money(d.balance)}</span></div>
       </div>
     </div>
     <div class="footer-strip">
@@ -916,7 +916,7 @@ function renderPreview(){
         <div class="social"><div class="social-title">Follow Us on</div><div class="social-row"><span class="social-icon">f</span> living word imprints</div><div class="social-row"><span class="social-icon">◎</span> livingwordimprints</div></div>
       </div>
       <div class="important"><strong>Important!</strong><p>Order status will be sent by text or email</p><div class="wait-box">Please wait for “Pickup Date”<br>before calling - Thank you</div></div>
-      <div class="pickup-box"><h2>PICKUP DATE</h2><div class="pickup-date-line">${esc(d.pickupDate||'____/____/____')}</div></div>
+      <div class="pickup-box"><h2>PICKUP DATE</h2><div class="pickup-date-line printed-entry">${esc(d.pickupDate||'____/____/____')}</div></div>
     </div>
     <div class="admin-preview no-print"><strong>Status:</strong> ${esc(d.status||'Received')} &nbsp; <strong>Internal Notes:</strong> ${esc(d.notes||'')}</div>`;
 }

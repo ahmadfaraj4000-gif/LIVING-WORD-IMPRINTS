@@ -719,6 +719,11 @@ button {
 	gap: 20px
 }
 
+.printed-entry {
+	color: #000;
+	font-weight: 800
+}
+
 .email-check {
 	display: flex;
 	align-items: center;
