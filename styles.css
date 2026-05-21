@@ -238,7 +238,7 @@ button {
 	display: grid;
 	grid-template-columns: 80px 1.5fr 110px 90px 100px 110px;
 	gap: 8px;
-	align-items: end;
+	align-items: start;
 	background: #fafafa;
 	border: 1px solid #eee;
 	border-radius: 12px;
@@ -254,6 +254,87 @@ button {
 
 .item-edit-row input {
 	padding: 9px
+}
+
+.stock-warning {
+	color: #a20d0d;
+	font-size: 12px;
+	font-weight: 800;
+	line-height: 1.25;
+	min-height: 15px
+}
+
+.stock-warning[hidden] {
+	display: none
+}
+
+.inventory-description-field {
+	position: relative
+}
+
+.inventory-picker-toggle {
+	font-size: 12px;
+	margin-top: 2px;
+	padding: 7px 9px;
+	width: max-content
+}
+
+.inventory-picker {
+	background: #fff;
+	border: 1px solid #d7d7d7;
+	border-radius: 10px;
+	box-shadow: 0 16px 42px #00000024;
+	display: grid;
+	gap: 8px;
+	left: 0;
+	padding: 10px;
+	position: absolute;
+	top: calc(100% + 4px);
+	width: min(440px, calc(100vw - 64px));
+	z-index: 8
+}
+
+.inventory-picker[hidden] {
+	display: none
+}
+
+.inventory-picker-search {
+	border-color: #bcbcbc !important
+}
+
+.inventory-picker-results {
+	display: grid;
+	gap: 5px;
+	max-height: 280px;
+	overflow-y: auto
+}
+
+.inventory-result {
+	background: #f7f7f7;
+	border: 1px solid #ececec;
+	border-radius: 8px;
+	display: grid;
+	gap: 3px;
+	padding: 9px;
+	text-align: left
+}
+
+.inventory-result:hover,
+.inventory-result:focus-visible {
+	background: #eee;
+	border-color: #bcbcbc
+}
+
+.inventory-result strong {
+	font-size: 13px
+}
+
+.inventory-result span,
+.inventory-picker-empty {
+	color: var(--muted);
+	font-size: 12px;
+	font-weight: 700;
+	margin: 0
 }
 
 .add-line-btn {
@@ -336,6 +417,15 @@ button {
 	font-size: 15px
 }
 
+.modal-card select {
+	background: #fff;
+	border: 1px solid #d5d5d5;
+	border-radius: 10px;
+	font-size: 15px;
+	padding: 12px;
+	width: 100%
+}
+
 .modal-actions {
 	display: flex;
 	justify-content: flex-end;
@@ -369,6 +459,100 @@ button {
 	color: #111;
 	font-size: 16px;
 	overflow-wrap: anywhere
+}
+
+.inventory-add-card {
+	width: min(860px, 100%)
+}
+
+.inventory-add-form {
+	display: grid;
+	gap: 14px;
+	grid-template-columns: repeat(4, minmax(0, 1fr))
+}
+
+.inventory-add-form label {
+	font-size: 13px;
+	font-weight: 800;
+	color: #222;
+	display: grid;
+	gap: 6px
+}
+
+.inventory-add-product {
+	grid-column: span 2
+}
+
+.inventory-toolbar {
+	align-items: center;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 12px;
+	margin: 0 0 14px
+}
+
+.inventory-filter-toggle {
+	align-items: center;
+	display: inline-flex;
+	gap: 8px;
+	min-height: 40px
+}
+
+.inventory-filter-toggle strong {
+	background: #111;
+	border-radius: 999px;
+	color: #fff;
+	font-size: 12px;
+	min-width: 24px;
+	padding: 4px 7px
+}
+
+.inventory-filter-toggle.active-filter-card {
+	background: #111;
+	border-color: #111;
+	color: #fff
+}
+
+.inventory-filter-toggle.active-filter-card strong {
+	background: #fff;
+	color: #111
+}
+
+.inventory-table-wrap {
+	max-height: 68vh;
+	overflow: auto
+}
+
+.inventory-table {
+	min-width: 1120px
+}
+
+.inventory-table th {
+	position: sticky;
+	top: 0;
+	z-index: 1
+}
+
+.inventory-table input,
+.inventory-table select {
+	background: #fff;
+	border: 1px solid #d7d7d7;
+	border-radius: 8px;
+	font: inherit;
+	padding: 8px;
+	width: 100%
+}
+
+.inventory-table td {
+	min-width: 120px
+}
+
+.inventory-table td:nth-child(2) {
+	min-width: 260px
+}
+
+.inventory-low-row td {
+	background: #fff5d7
 }
 
 .paper {
@@ -929,6 +1113,10 @@ button {
 	.dashboard-grid {
 		grid-template-columns: 1fr;
 	}
+
+	.inventory-add-form {
+		grid-template-columns: repeat(2, minmax(0, 1fr))
+	}
 }
 
 
@@ -951,6 +1139,7 @@ main.app-shell.wrap {
 }
 
 #dashboardView,
+#inventoryView,
 #databaseView,
 #archivedView {
 	width: 100%;

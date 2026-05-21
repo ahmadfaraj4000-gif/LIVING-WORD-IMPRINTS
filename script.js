@@ -23,6 +23,16 @@ const voucherDetailsModal = document.getElementById('voucherDetailsModal');
 const voucherDetailsId = document.getElementById('voucherDetailsId');
 const voucherDetailsProvider = document.getElementById('voucherDetailsProvider');
 const voucherDetailsAmount = document.getElementById('voucherDetailsAmount');
+const inventoryBody = document.getElementById('inventoryBody');
+const inventorySearchInput = document.getElementById('inventorySearchInput');
+const inventoryReorderFilterBtn = document.getElementById('inventoryReorderFilterBtn');
+const inventoryShowAllBtn = document.getElementById('inventoryShowAllBtn');
+const inventoryReorderCount = document.getElementById('inventoryReorderCount');
+const inventorySaveStatus = document.getElementById('inventorySaveStatus');
+const addInventoryRowBtn = document.getElementById('addInventoryRowBtn');
+const inventoryAddModal = document.getElementById('inventoryAddModal');
+const inventoryAddForm = document.getElementById('inventoryAddForm');
+const inventoryAddCancelBtn = document.getElementById('inventoryAddCancelBtn');
 const dashboardIds = {
   dueToday: document.getElementById('dashDueToday'),
   lateOrders: document.getElementById('dashLateOrders'),
@@ -48,11 +58,145 @@ const noteAutosaveTimers = new Map();
 let isAutosaving = false;
 let dashboardFilter = '';
 let databaseFilter = '';
+let inventoryItems = [];
+let inventoryBackendAvailable = true;
+let inventoryShowReorderOnly = false;
+let inventorySaveTimer = null;
+let stockAdjustmentsByInvoice = new Map();
+const INVENTORY_STORAGE_KEY = 'lwi_inventory_items_v1';
+const STOCK_META_KEY = 'stockAdjustments';
+const INVENTORY_COLUMNS = [
+  'Product Code',
+  'Product',
+  'Price',
+  'Status',
+  'Minimum stock',
+  'Available Stock',
+  'Supplier',
+  'Report Color'
+];
 
 function money(n){return `$${(Number(n)||0).toFixed(2)}`}
 function today(){return new Date().toISOString().slice(0,10)}
 function invoiceNo(){return String(Date.now()).slice(-6)}
 function esc(v){return String(v ?? '').replace(/[&<>"]/g, s=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[s]))}
+function normalizedText(value){return String(value || '').toLowerCase().replace(/\s+/g, ' ').trim()}
+function inventoryKey(item){return String(item?.product || item?.product_code || item?.id || '').trim()}
+function inventoryRowId(){return `local-${Date.now()}-${Math.random().toString(16).slice(2)}`}
+function setInventoryStatus(message, state = ''){
+  if (!inventorySaveStatus) return;
+  inventorySaveStatus.textContent = message;
+  inventorySaveStatus.className = 'autosave-status';
+  if (state) inventorySaveStatus.classList.add(state);
+}
+function parseCsv(text){
+  const rows = [];
+  let row = [];
+  let value = '';
+  let quoted = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    const next = text[i + 1];
+
+    if (char === '"' && quoted && next === '"') {
+      value += '"';
+      i++;
+    } else if (char === '"') {
+      quoted = !quoted;
+    } else if (char === ',' && !quoted) {
+      row.push(value);
+      value = '';
+    } else if ((char === '\n' || char === '\r') && !quoted) {
+      if (char === '\r' && next === '\n') i++;
+      row.push(value);
+      if (row.some(cell => String(cell).trim())) rows.push(row);
+      row = [];
+      value = '';
+    } else {
+      value += char;
+    }
+  }
+
+  row.push(value);
+  if (row.some(cell => String(cell).trim())) rows.push(row);
+  return rows;
+}
+function csvRowsToInventory(csvText){
+  const rows = parseCsv(csvText);
+  const headers = rows.shift() || [];
+  return rows.map(row => {
+    const source = Object.fromEntries(headers.map((header, index) => [header, row[index] || '']));
+    return normalizeInventoryItem({
+      product_code: source['Product Code'],
+      product: source.Product,
+      price: source.Price,
+      status: source.Status,
+      minimum_stock: source['Minimum stock'],
+      available_stock: source['Available Stock'],
+      supplier: source.Supplier,
+      report_color: source['Report Color']
+    });
+  }).filter(item => item.product);
+}
+function sizeTokenIndex(parts){
+  const sizeTokens = new Set(['YXS','YS','YM','YL','YXL','XS','S','M','L','XL','XXL','2XL','3XL','4XL','5XL','6XL','SM','MD','MED','LG']);
+  return parts.findIndex(part => {
+    const token = String(part || '').toUpperCase().replace(/[.,]/g, '');
+    return sizeTokens.has(token) || /^\d+(\/\d+)?$/.test(token) || /^\d+X$/.test(token) || /^\d+-\d+$/.test(token);
+  });
+}
+function inventoryProductParts(product){
+  const parts = String(product || '').trim().split(/\s+/);
+  const sizeIndex = sizeTokenIndex(parts);
+
+  if (sizeIndex > 0) {
+    return {
+      color: parts.slice(0, sizeIndex).join(' '),
+      size: parts[sizeIndex],
+      description: parts.slice(sizeIndex + 1).join(' ') || product
+    };
+  }
+
+  return {
+    color: parts[0] || '',
+    size: '',
+    description: parts.slice(1).join(' ') || product
+  };
+}
+function deriveInventoryColor(product){
+  return inventoryProductParts(product).color;
+}
+function normalizeInventoryItem(item = {}){
+  return {
+    id: item.id || inventoryRowId(),
+    product_code: item.product_code || item.productCode || '',
+    product: item.product || '',
+    price: item.price === '' || item.price == null ? '' : Number(item.price),
+    status: item.status || 'Active',
+    minimum_stock: Number(item.minimum_stock ?? item.minimumStock ?? 0) || 0,
+    available_stock: Number(item.available_stock ?? item.availableStock ?? 0) || 0,
+    supplier: item.supplier || '',
+    report_color: item.report_color || item.reportColor || 'No'
+  };
+}
+function findInventoryItem(value){
+  const needle = normalizedText(value);
+  if (!needle) return null;
+  return inventoryItems.find(item =>
+    normalizedText(item.product) === needle ||
+    normalizedText(item.product_code) === needle ||
+    normalizedText(inventoryKey(item)) === needle
+  ) || null;
+}
+function stockWarningForLine(item, amount){
+  if (!item || !amount) return '';
+  const available = Number(item.available_stock) || 0;
+  const requested = Number(amount) || 0;
+  if (available <= 0) return `Out of stock: ${item.product}`;
+  if (requested > available) return `Only ${available} in stock for ${item.product}`;
+  return '';
+}
 function voucherDetailsFromRow(row, storedNotes = splitStoredNotes(row.notes || '')){
   return {
     paymentType: storedNotes.meta.paymentType || row.payment_type || '',
@@ -362,6 +506,106 @@ function updateFilterDisplay(){
   if (databaseFilterSelect) databaseFilterSelect.value = databaseFilter;
 }
 
+function refreshInventoryDatalists(){
+  itemsEditor.querySelectorAll('.inventory-picker-search').forEach(search => {
+    renderInventoryPickerResults(search.dataset.inventoryPickerSearch, search.value);
+  });
+}
+
+function inventorySearchMatches(item, query){
+  if (!query) return true;
+  return normalizedText([
+    item.product,
+    item.product_code,
+    item.supplier,
+    deriveInventoryColor(item.product)
+  ].join(' ')).includes(normalizedText(query));
+}
+
+function renderInventoryPickerResults(index, query = ''){
+  const results = itemsEditor.querySelector(`[data-inventory-results="${index}"]`);
+  if (!results) return;
+
+  const matches = inventoryItems
+    .filter(item => item.status !== 'Inactive')
+    .filter(item => inventorySearchMatches(item, query))
+    .sort((a, b) => String(a.product).localeCompare(String(b.product)))
+    .slice(0, 80);
+
+  results.innerHTML = matches.length
+    ? matches.map(item => {
+        const parts = inventoryProductParts(item.product);
+        return `
+          <button class="inventory-result" data-inventory-choice="${esc(inventoryKey(item))}" data-inventory-index="${esc(index)}" type="button">
+            <strong>${esc(item.product)}</strong>
+            <span>${esc(parts.description)} / Color ${esc(parts.color || 'None')} / Size ${esc(parts.size || 'None')} / Stock ${esc(item.available_stock)}</span>
+          </button>
+        `;
+      }).join('')
+    : '<p class="inventory-picker-empty">No inventory matches.</p>';
+}
+
+function closeInventoryPickers(){
+  itemsEditor.querySelectorAll('.inventory-picker').forEach(picker => {
+    picker.hidden = true;
+  });
+}
+
+function openInventoryPicker(index){
+  closeInventoryPickers();
+  const picker = itemsEditor.querySelector(`[data-inventory-picker="${index}"]`);
+  const search = itemsEditor.querySelector(`[data-inventory-picker-search="${index}"]`);
+  if (!picker || !search) return;
+  picker.hidden = false;
+  search.value = '';
+  renderInventoryPickerResults(index);
+  search.focus();
+}
+
+function handleInventoryLineSelection(input){
+  const match = findInventoryItem(input.value);
+  const index = input.name.split('_').pop();
+  const keyField = form.elements[`inventory_id_${index}`];
+
+  if (!match) {
+    if (keyField) keyField.value = '';
+    updateStockWarnings();
+    return;
+  }
+
+  selectInventoryItem(index, match);
+}
+
+function selectInventoryItem(index, match){
+  const descriptionField = form.elements[`description_${index}`];
+  const keyField = form.elements[`inventory_id_${index}`];
+  const parts = inventoryProductParts(match.product);
+  if (descriptionField) descriptionField.value = parts.description;
+  if (keyField) keyField.value = inventoryKey(match);
+  if (form.elements[`color_${index}`]) form.elements[`color_${index}`].value = parts.color;
+  if (form.elements[`size_${index}`]) form.elements[`size_${index}`].value = parts.size;
+  updateStockWarnings();
+}
+
+function lineInventoryItem(index){
+  const key = form.elements[`inventory_id_${index}`]?.value;
+  const description = form.elements[`description_${index}`]?.value;
+  return inventoryItems.find(item => String(inventoryKey(item)) === String(key)) || findInventoryItem(description);
+}
+
+function updateStockWarnings(){
+  for (let i = 0; i < itemCount; i++) {
+    const warningEl = itemsEditor.querySelector(`[data-stock-warning="${i}"]`);
+    if (!warningEl) continue;
+
+    const item = lineInventoryItem(i);
+    const amount = Number(form.elements[`amount_${i}`]?.value) || 0;
+    const warning = stockWarningForLine(item, amount);
+    warningEl.textContent = warning;
+    warningEl.hidden = !warning;
+  }
+}
+
 function createRows(existingItems=[]){
   itemsEditor.innerHTML='';
   for(let i=0;i<itemCount;i++){
@@ -369,7 +613,7 @@ function createRows(existingItems=[]){
     row.className='item-edit-row';
     row.innerHTML=`
       <label><small>Amount</small><input name="amount_${i}" type="number" min="0"></label>
-      <label><small>Item Description</small><input name="description_${i}"></label>
+      <label class="inventory-description-field"><small>Item Description</small><input name="description_${i}" autocomplete="off"><button class="ghost inventory-picker-toggle" data-open-inventory-picker="${i}" type="button">Search Inventory</button><input name="inventory_id_${i}" type="hidden"><span class="stock-warning" data-stock-warning="${i}"></span><span class="inventory-picker" data-inventory-picker="${i}" hidden><input class="inventory-picker-search" data-inventory-picker-search="${i}" placeholder="Search inventory..." autocomplete="off"><span class="inventory-picker-results" data-inventory-results="${i}"></span></span></label>
       <label><small>Color</small><input name="color_${i}"></label>
       <label><small>Size</small><input name="size_${i}"></label>
       <label><small>Price Ea</small><input name="price_${i}" type="number" step="0.01" min="0"></label>
@@ -377,6 +621,7 @@ function createRows(existingItems=[]){
     itemsEditor.appendChild(row);
   }
   existingItems.forEach((item,i)=>Object.keys(item).forEach(k=>{const el=form.elements[`${k}_${i}`]; if(el) el.value=item[k]??'';}));
+  updateStockWarnings();
 }
 function formData(){
   const data=Object.fromEntries(new FormData(form).entries());
@@ -385,13 +630,14 @@ function formData(){
   data.phone = formatPhoneNumber(data.phone);
   data.items=[];
   for(let i=0;i<itemCount;i++){
-    data.items.push({amount:data[`amount_${i}`]||'',description:data[`description_${i}`]||'',color:data[`color_${i}`]||'',size:data[`size_${i}`]||'',price:data[`price_${i}`]||'',line:data[`line_${i}`]||''});
+    data.items.push({amount:data[`amount_${i}`]||'',description:data[`description_${i}`]||'',color:data[`color_${i}`]||'',size:data[`size_${i}`]||'',price:data[`price_${i}`]||'',line:data[`line_${i}`]||'',inventory_id:data[`inventory_id_${i}`]||''});
   }
   return data;
 }
 
 function invoiceRowFromForm(){
   const d = formData();
+  const savedStockAdjustments = editingInvoiceId ? stockAdjustmentsByInvoice.get(String(editingInvoiceId)) || {} : {};
   const internalMeta = {
     parentFirstName: d.parentFirstName || '',
     parentLastName: d.parentLastName || '',
@@ -399,7 +645,8 @@ function invoiceRowFromForm(){
     paymentType: d.paymentType || '',
     voucherId: d.voucherId || '',
     voucherProvider: d.voucherProvider || '',
-    voucherAmount: d.voucherAmount || ''
+    voucherAmount: d.voucherAmount || '',
+    [STOCK_META_KEY]: savedStockAdjustments
   };
 
   return {
@@ -529,6 +776,9 @@ function setForm(data){
 
   editingInvoiceId = data.id || null;
   editingInvoiceArchived = data.archived === true;
+  if (editingInvoiceId) {
+    stockAdjustmentsByInvoice.set(String(editingInvoiceId), storedNotes.meta[STOCK_META_KEY] || {});
+  }
 
   calculate();
   updateVoucherEditControl();
@@ -547,6 +797,7 @@ function calculate(){
   const tax=taxable*0.0635;
   const total=Math.max(taxable+tax,0);
   form.subtotal.value=subtotal.toFixed(2); form.tax.value=tax.toFixed(2); form.total.value=total.toFixed(2); form.balance.value=(total-payment).toFixed(2);
+  updateStockWarnings();
   renderPreview();
 }
 function renderPreview(){
@@ -694,6 +945,235 @@ async function renderArchivedDatabase(){
     });
 }
 
+async function loadSeedInventory(){
+  const stored = localStorage.getItem(INVENTORY_STORAGE_KEY);
+  if (stored) {
+    try {
+      return JSON.parse(stored).map(normalizeInventoryItem);
+    } catch (error) {
+      console.warn('Could not read local inventory.', error);
+    }
+  }
+
+  try {
+    const response = await fetch('data/inventory.csv');
+    if (!response.ok) throw new Error('Inventory CSV not found.');
+    return csvRowsToInventory(await response.text());
+  } catch (error) {
+    console.warn('Could not load inventory seed file.', error);
+    return [];
+  }
+}
+
+async function loadInventory(){
+  setInventoryStatus('Inventory loading...', 'saving');
+
+  try {
+    const { data, error } = await supabaseClient
+      .from('inventory')
+      .select('*')
+      .order('product', { ascending: true });
+
+    if (error) throw error;
+
+    inventoryBackendAvailable = true;
+    inventoryItems = (data || []).map(normalizeInventoryItem);
+
+    if (!inventoryItems.length) {
+      inventoryItems = await loadSeedInventory();
+      if (inventoryItems.length) await saveInventorySeedToSupabase();
+    }
+
+    localStorage.setItem(INVENTORY_STORAGE_KEY, JSON.stringify(inventoryItems));
+    setInventoryStatus('Inventory synced.', 'saved');
+  } catch (error) {
+    inventoryBackendAvailable = false;
+    inventoryItems = await loadSeedInventory();
+    setInventoryStatus('Using local inventory. Add the Supabase table to sync.', 'error');
+    console.warn('Inventory table unavailable. Using local storage.', error);
+  }
+
+  renderInventory();
+  refreshInventoryDatalists();
+}
+
+async function saveInventorySeedToSupabase(){
+  const rows = inventoryItems.map(item => ({
+    product_code: item.product_code,
+    product: item.product,
+    price: item.price === '' ? null : Number(item.price),
+    status: item.status,
+    minimum_stock: Number(item.minimum_stock) || 0,
+    available_stock: Number(item.available_stock) || 0,
+    supplier: item.supplier,
+    report_color: item.report_color
+  }));
+
+  const { error } = await supabaseClient
+    .from('inventory')
+    .upsert(rows, { onConflict: 'product' });
+
+  if (error) throw error;
+}
+
+function inventoryNeedsReorder(item){
+  return Number(item.available_stock) <= Number(item.minimum_stock);
+}
+
+function renderInventory(){
+  if (!inventoryBody) return;
+
+  const q = normalizedText(inventorySearchInput?.value || '');
+  const rows = inventoryItems
+    .filter(item => !inventoryShowReorderOnly || inventoryNeedsReorder(item))
+    .filter(item => normalizedText([
+      item.product_code,
+      item.product,
+      deriveInventoryColor(item.product),
+      item.supplier,
+      item.status
+    ].join(' ')).includes(q))
+    .sort((a, b) => String(a.product).localeCompare(String(b.product)));
+
+  const reorderCount = inventoryItems.filter(inventoryNeedsReorder).length;
+  if (inventoryReorderCount) inventoryReorderCount.textContent = reorderCount;
+  if (inventoryShowAllBtn) inventoryShowAllBtn.hidden = !inventoryShowReorderOnly;
+  if (inventoryReorderFilterBtn) inventoryReorderFilterBtn.classList.toggle('active-filter-card', inventoryShowReorderOnly);
+
+  inventoryBody.innerHTML = rows.map(item => {
+    const key = esc(item.id);
+    return `
+      <tr class="${inventoryNeedsReorder(item) ? 'inventory-low-row' : ''}" data-inventory-id="${key}">
+        <td><input data-inventory-field="product_code" value="${esc(item.product_code)}"></td>
+        <td><input data-inventory-field="product" value="${esc(item.product)}"></td>
+        <td><input data-inventory-field="price" type="number" step="0.01" min="0" value="${esc(item.price)}"></td>
+        <td>
+          <select data-inventory-field="status">
+            <option ${item.status === 'Active' ? 'selected' : ''}>Active</option>
+            <option ${item.status === 'Inactive' ? 'selected' : ''}>Inactive</option>
+          </select>
+        </td>
+        <td><input data-inventory-field="minimum_stock" type="number" min="0" value="${esc(item.minimum_stock)}"></td>
+        <td><input data-inventory-field="available_stock" type="number" min="0" value="${esc(item.available_stock)}"></td>
+        <td><input data-inventory-field="supplier" value="${esc(item.supplier)}"></td>
+        <td>
+          <select data-inventory-field="report_color">
+            <option ${item.report_color === 'No' ? 'selected' : ''}>No</option>
+            <option ${item.report_color === 'Yes' ? 'selected' : ''}>Yes</option>
+          </select>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function inventoryItemFromEvent(target){
+  const row = target.closest('[data-inventory-id]');
+  if (!row) return null;
+  const key = row.dataset.inventoryId;
+  return inventoryItems.find(item => String(item.id) === String(key));
+}
+
+function queueInventorySave(item){
+  localStorage.setItem(INVENTORY_STORAGE_KEY, JSON.stringify(inventoryItems));
+  refreshInventoryDatalists();
+  updateStockWarnings();
+
+  clearTimeout(inventorySaveTimer);
+  setInventoryStatus(inventoryBackendAvailable ? 'Inventory changes saving...' : 'Inventory saved locally.', inventoryBackendAvailable ? 'saving' : 'error');
+  inventorySaveTimer = setTimeout(() => saveInventoryItem(item), 600);
+}
+
+async function saveInventoryItem(item){
+  if (!item) return;
+
+  localStorage.setItem(INVENTORY_STORAGE_KEY, JSON.stringify(inventoryItems));
+
+  if (!inventoryBackendAvailable) {
+    return;
+  }
+
+  const row = {
+    product_code: item.product_code,
+    product: item.product,
+    price: item.price === '' ? null : Number(item.price),
+    status: item.status,
+    minimum_stock: Number(item.minimum_stock) || 0,
+    available_stock: Number(item.available_stock) || 0,
+    supplier: item.supplier,
+    report_color: item.report_color
+  };
+
+  const request = String(item.id || '').startsWith('local-')
+    ? supabaseClient.from('inventory').upsert(row, { onConflict: 'product' })
+    : supabaseClient.from('inventory').update(row).eq('id', item.id);
+  const { error } = await request;
+
+  if (error) {
+    console.error(error);
+    inventoryBackendAvailable = false;
+    setInventoryStatus('Inventory sync failed. Changes saved locally.', 'error');
+    return;
+  }
+
+  setInventoryStatus('Inventory saved.', 'saved');
+}
+
+function openInventoryAddModal(){
+  if (!inventoryAddModal || !inventoryAddForm) return;
+  inventoryAddForm.reset();
+  inventoryAddForm.status.value = 'Active';
+  inventoryAddForm.minimum_stock.value = '0';
+  inventoryAddForm.available_stock.value = '0';
+  inventoryAddForm.report_color.value = 'No';
+  inventoryAddModal.hidden = false;
+  setTimeout(() => inventoryAddForm.product.focus(), 0);
+}
+
+function closeInventoryAddModal(){
+  if (inventoryAddModal) inventoryAddModal.hidden = true;
+}
+
+async function addInventoryFromForm(event){
+  event.preventDefault();
+  if (!inventoryAddForm.reportValidity()) return;
+
+  const values = Object.fromEntries(new FormData(inventoryAddForm).entries());
+  const product = String(values.product || '').trim();
+  const duplicate = inventoryItems.find(item => normalizedText(item.product) === normalizedText(product));
+
+  if (duplicate) {
+    alert('That product is already in inventory. Edit the existing inventory row instead.');
+    return;
+  }
+
+  const item = normalizeInventoryItem({
+    product_code: String(values.product_code || '').trim(),
+    product,
+    price: values.price === '' ? '' : Number(values.price),
+    status: values.status || 'Active',
+    minimum_stock: values.minimum_stock,
+    available_stock: values.available_stock,
+    supplier: String(values.supplier || '').trim(),
+    report_color: values.report_color || 'No'
+  });
+
+  inventoryItems.unshift(item);
+  renderInventory();
+  refreshInventoryDatalists();
+  updateStockWarnings();
+  setInventoryStatus('Saving new inventory item...', 'saving');
+
+  const saved = await saveInventoryItemImmediate(item);
+  if (!saved) {
+    setInventoryStatus('New inventory item saved locally. Supabase sync failed.', 'error');
+  } else {
+    setInventoryStatus(inventoryBackendAvailable ? 'Inventory item added.' : 'New inventory item saved locally.', inventoryBackendAvailable ? 'saved' : 'error');
+  }
+
+  closeInventoryAddModal();
+}
+
 async function populateCustomers(){
   const rows = await getAllInvoices();
 
@@ -726,6 +1206,88 @@ function validateInvoice(){
 
   return form.reportValidity();
 }
+
+function currentStockAdjustments(){
+  const adjustments = {};
+
+  formData().items.forEach(item => {
+    const key = item.inventory_id;
+    const amount = Number(item.amount) || 0;
+    if (!key || amount <= 0) return;
+    adjustments[key] = (adjustments[key] || 0) + amount;
+  });
+
+  return adjustments;
+}
+
+async function saveInventoryItemImmediate(item){
+  localStorage.setItem(INVENTORY_STORAGE_KEY, JSON.stringify(inventoryItems));
+
+  if (!inventoryBackendAvailable || !item) return true;
+
+  const row = {
+      product_code: item.product_code,
+      product: item.product,
+      price: item.price === '' ? null : Number(item.price),
+      status: item.status,
+      minimum_stock: Number(item.minimum_stock) || 0,
+      available_stock: Number(item.available_stock) || 0,
+      supplier: item.supplier,
+      report_color: item.report_color
+    };
+  const request = String(item.id || '').startsWith('local-')
+    ? supabaseClient.from('inventory').upsert(row, { onConflict: 'product' })
+    : supabaseClient.from('inventory').update(row).eq('id', item.id);
+  const { error } = await request;
+
+  if (error) {
+    console.error(error);
+    setInventoryStatus('Inventory stock update failed. Check Supabase inventory table.', 'error');
+    return false;
+  }
+
+  return true;
+}
+
+async function reconcileInvoiceInventory(invoiceId){
+  if (!invoiceId) return true;
+
+  const previousAdjustments = stockAdjustmentsByInvoice.get(String(invoiceId)) || {};
+  const nextAdjustments = currentStockAdjustments();
+  const keys = new Set([...Object.keys(previousAdjustments), ...Object.keys(nextAdjustments)]);
+
+  for (const key of keys) {
+    const delta = (Number(nextAdjustments[key]) || 0) - (Number(previousAdjustments[key]) || 0);
+    if (!delta) continue;
+
+    const item = inventoryItems.find(row => String(inventoryKey(row)) === String(key));
+    if (!item) continue;
+
+    item.available_stock = Math.max(0, (Number(item.available_stock) || 0) - delta);
+    const saved = await saveInventoryItemImmediate(item);
+    if (!saved) return false;
+  }
+
+  stockAdjustmentsByInvoice.set(String(invoiceId), nextAdjustments);
+
+  const row = invoiceRowFromForm();
+  const { error } = await supabaseClient
+    .from('invoices')
+    .update({ notes: row.notes, items: row.items })
+    .eq('id', invoiceId);
+
+  if (error) {
+    console.error(error);
+    alert('Invoice saved, but the inventory tracking note could not be updated.');
+    return false;
+  }
+
+  renderInventory();
+  refreshInventoryDatalists();
+  updateStockWarnings();
+  return true;
+}
+
 async function submitInvoice(){
 
   calculate();
@@ -769,6 +1331,11 @@ async function submitInvoice(){
     editingInvoiceArchived = savedInvoice.archived === true;
   }
 
+  const inventoryTracked = await reconcileInvoiceInventory(editingInvoiceId);
+  if (!inventoryTracked) {
+    alert('Invoice saved, but inventory stock was not fully updated. Please check the Inventory tab.');
+  }
+
   setAutosaveStatus(wasEditing ? 'Saved manually. Autosave still on.' : 'Invoice saved. Autosave is on for this invoice.', 'saved');
 
   await populateCustomers();
@@ -794,13 +1361,14 @@ function newInvoice(){
   form.voucherId.value = '';
   form.voucherProvider.value = '';
   form.voucherAmount.value = '';
+  stockAdjustmentsByInvoice.delete('');
   renderCustomerHistory(null);
   setAutosaveStatus('Manual save required for new invoices.');
   calculate();
   updateVoucherEditControl();
 }
 
-document.querySelectorAll('.tab').forEach(btn=>btn.addEventListener('click',()=>{document.querySelectorAll('.tab,.view').forEach(x=>x.classList.remove('active'));btn.classList.add('active');document.getElementById(btn.dataset.view+'View').classList.add('active');renderPreview();renderDatabase();renderArchivedDatabase();renderDashboard();}));
+document.querySelectorAll('.tab').forEach(btn=>btn.addEventListener('click',()=>{document.querySelectorAll('.tab,.view').forEach(x=>x.classList.remove('active'));btn.classList.add('active');document.getElementById(btn.dataset.view+'View').classList.add('active');renderPreview();renderDatabase();renderArchivedDatabase();renderDashboard();renderInventory();}));
 document.querySelectorAll('.filter-card').forEach(card => {
   card.addEventListener('click', () => {
     dashboardFilter = card.dataset.dashboardFilter;
@@ -826,7 +1394,39 @@ if (clearDatabaseFilterBtn) {
     renderDatabase();
   });
 }
-form.addEventListener('input', queueAutosave);
+form.addEventListener('input', e => {
+  if (e.target.classList.contains('inventory-picker-search')) return;
+  if (e.target.name?.startsWith('description_')) handleInventoryLineSelection(e.target);
+  if (e.target.name?.startsWith('amount_')) updateStockWarnings();
+  queueAutosave();
+});
+form.addEventListener('change', e => {
+  if (e.target.name?.startsWith('description_')) handleInventoryLineSelection(e.target);
+  if (e.target.name?.startsWith('amount_')) updateStockWarnings();
+});
+itemsEditor.addEventListener('click', e => {
+  const openButton = e.target.closest('[data-open-inventory-picker]');
+  if (openButton) {
+    openInventoryPicker(openButton.dataset.openInventoryPicker);
+    return;
+  }
+
+  const choice = e.target.closest('[data-inventory-choice]');
+  if (!choice) return;
+
+  const item = inventoryItems.find(row => String(inventoryKey(row)) === String(choice.dataset.inventoryChoice));
+  if (!item) return;
+  selectInventoryItem(choice.dataset.inventoryIndex, item);
+  closeInventoryPickers();
+  queueAutosave();
+});
+itemsEditor.addEventListener('input', e => {
+  if (!e.target.classList.contains('inventory-picker-search')) return;
+  renderInventoryPickerResults(e.target.dataset.inventoryPickerSearch, e.target.value);
+});
+document.addEventListener('click', e => {
+  if (!e.target.closest('.inventory-description-field')) closeInventoryPickers();
+});
 form.phone.addEventListener('input', () => {
   const start = form.phone.selectionStart;
   const beforeLength = form.phone.value.length;
@@ -886,6 +1486,57 @@ customerSelect.onchange = async () => {
 };
 searchInput.addEventListener('input', renderDatabase);
 if (archivedSearchInput) archivedSearchInput.addEventListener('input', renderArchivedDatabase);
+if (inventorySearchInput) inventorySearchInput.addEventListener('input', renderInventory);
+if (inventoryReorderFilterBtn) {
+  inventoryReorderFilterBtn.addEventListener('click', () => {
+    inventoryShowReorderOnly = true;
+    renderInventory();
+  });
+}
+if (inventoryShowAllBtn) {
+  inventoryShowAllBtn.addEventListener('click', () => {
+    inventoryShowReorderOnly = false;
+    renderInventory();
+  });
+}
+if (addInventoryRowBtn) addInventoryRowBtn.addEventListener('click', openInventoryAddModal);
+if (inventoryAddForm) inventoryAddForm.addEventListener('submit', addInventoryFromForm);
+if (inventoryAddCancelBtn) inventoryAddCancelBtn.addEventListener('click', closeInventoryAddModal);
+if (inventoryAddModal) {
+  inventoryAddModal.addEventListener('click', e => {
+    if (e.target === inventoryAddModal) closeInventoryAddModal();
+  });
+}
+if (inventoryBody) {
+  inventoryBody.addEventListener('input', e => {
+    const field = e.target.dataset.inventoryField;
+    if (!field) return;
+
+    const item = inventoryItemFromEvent(e.target);
+    if (!item) return;
+
+    if (field === 'price') {
+      item[field] = e.target.value === '' ? '' : Number(e.target.value);
+    } else if (field === 'minimum_stock' || field === 'available_stock') {
+      item[field] = Number(e.target.value) || 0;
+    } else {
+      item[field] = e.target.value;
+    }
+
+    queueInventorySave(item);
+    if (inventoryReorderCount) inventoryReorderCount.textContent = inventoryItems.filter(inventoryNeedsReorder).length;
+  });
+  inventoryBody.addEventListener('change', e => {
+    const field = e.target.dataset.inventoryField;
+    if (!field) return;
+
+    const item = inventoryItemFromEvent(e.target);
+    if (!item) return;
+    item[field] = e.target.value;
+    queueInventorySave(item);
+    renderInventory();
+  });
+}
 databaseBody.addEventListener('change', async e => {
 
   if (e.target.classList.contains('status-select')) {
@@ -1071,6 +1722,7 @@ if (archivedBody) {
 async function init(){
   createRows();
   newInvoice();
+  await loadInventory();
   await normalizeStoredPhoneNumbers();
   await populateCustomers();
   await renderDatabase();

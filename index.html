@@ -24,6 +24,7 @@
         <button class="tab active" data-view="dashboard" type="button">Dashboard</button>
         <button class="tab" data-view="edit" type="button">Edit</button>
         <button class="tab" data-view="preview" type="button">Preview</button>
+        <button class="tab" data-view="inventory" type="button">Inventory</button>
         <button class="tab" data-view="database" type="button">Database</button>
         <button class="tab" data-view="archived" type="button">Archived</button>
       </div>
@@ -171,6 +172,36 @@
         </div>
       </section>
 
+      <section id="inventoryView" class="view no-print">
+        <div class="database-head">
+          <h2>Inventory</h2>
+          <input id="inventorySearchInput" placeholder="Search product, color, supplier, or code..." />
+        </div>
+        <div class="inventory-toolbar">
+          <button class="ghost inventory-filter-toggle" id="inventoryReorderFilterBtn" type="button">Needs Reorder <strong id="inventoryReorderCount">0</strong></button>
+          <button class="ghost" id="inventoryShowAllBtn" type="button" hidden>Show All Inventory</button>
+          <button class="ghost" id="addInventoryRowBtn" type="button">+ Add Inventory Item</button>
+          <span class="autosave-status" id="inventorySaveStatus">Inventory loading...</span>
+        </div>
+        <div class="table-wrap inventory-table-wrap">
+          <table class="db-table inventory-table">
+            <thead>
+              <tr>
+                <th>Product Code</th>
+                <th>Product</th>
+                <th>Price</th>
+                <th>Status</th>
+                <th>Minimum stock</th>
+                <th>Available Stock</th>
+                <th>Supplier</th>
+                <th>Report Color</th>
+              </tr>
+            </thead>
+            <tbody id="inventoryBody"></tbody>
+          </table>
+        </div>
+      </section>
+
       <section id="archivedView" class="view no-print">
         <div class="database-head">
           <h2>Archived Orders</h2>
@@ -228,6 +259,40 @@
       </div>
       <div class="modal-actions">
         <button class="primary" id="voucherDetailsCloseBtn" type="button">Close</button>
+      </div>
+    </div>
+  </div>
+  <div class="modal-backdrop no-print" id="inventoryAddModal" hidden>
+    <div class="modal-card inventory-add-card" role="dialog" aria-modal="true" aria-labelledby="inventoryAddTitle">
+      <div class="modal-head">
+        <div>
+          <h2 id="inventoryAddTitle">Add Inventory Item</h2>
+          <p>Add a product to inventory and invoice search.</p>
+        </div>
+      </div>
+      <form id="inventoryAddForm" class="inventory-add-form">
+        <label>Product Code<input name="product_code"></label>
+        <label class="inventory-add-product">Product<input name="product" required></label>
+        <label>Price<input name="price" type="number" step="0.01" min="0"></label>
+        <label>Status
+          <select name="status">
+            <option>Active</option>
+            <option>Inactive</option>
+          </select>
+        </label>
+        <label>Minimum stock<input name="minimum_stock" type="number" min="0" value="0"></label>
+        <label>Available Stock<input name="available_stock" type="number" min="0" value="0"></label>
+        <label>Supplier<input name="supplier"></label>
+        <label>Report Color
+          <select name="report_color">
+            <option>No</option>
+            <option>Yes</option>
+          </select>
+        </label>
+      </form>
+      <div class="modal-actions">
+        <button class="ghost" id="inventoryAddCancelBtn" type="button">Cancel</button>
+        <button class="primary" id="inventoryAddSaveBtn" type="submit" form="inventoryAddForm">Add Item</button>
       </div>
     </div>
   </div>
