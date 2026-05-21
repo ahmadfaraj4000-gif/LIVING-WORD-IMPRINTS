@@ -30,9 +30,16 @@ const inventoryShowAllBtn = document.getElementById('inventoryShowAllBtn');
 const inventoryReorderCount = document.getElementById('inventoryReorderCount');
 const inventorySaveStatus = document.getElementById('inventorySaveStatus');
 const addInventoryRowBtn = document.getElementById('addInventoryRowBtn');
+const deleteInventoryBtn = document.getElementById('deleteInventoryBtn');
+const inventorySelectedCount = document.getElementById('inventorySelectedCount');
+const inventorySelectAll = document.getElementById('inventorySelectAll');
 const inventoryAddModal = document.getElementById('inventoryAddModal');
 const inventoryAddForm = document.getElementById('inventoryAddForm');
 const inventoryAddCancelBtn = document.getElementById('inventoryAddCancelBtn');
+const inventoryDeleteModal = document.getElementById('inventoryDeleteModal');
+const inventoryDeleteMessage = document.getElementById('inventoryDeleteMessage');
+const inventoryDeleteCancelBtn = document.getElementById('inventoryDeleteCancelBtn');
+const inventoryDeleteConfirmBtn = document.getElementById('inventoryDeleteConfirmBtn');
 const dashboardIds = {
   dueToday: document.getElementById('dashDueToday'),
   lateOrders: document.getElementById('dashLateOrders'),
@@ -62,8 +69,10 @@ let inventoryItems = [];
 let inventoryBackendAvailable = true;
 let inventoryShowReorderOnly = false;
 let inventorySaveTimer = null;
+let selectedInventoryIds = new Set();
 let stockAdjustmentsByInvoice = new Map();
 const INVENTORY_STORAGE_KEY = 'lwi_inventory_items_v1';
+const INVENTORY_DELETED_KEY = 'lwi_inventory_deleted_products_v1';
 const STOCK_META_KEY = 'stockAdjustments';
 const INVENTORY_COLUMNS = [
   'Product Code',
@@ -83,6 +92,27 @@ function esc(v){return String(v ?? '').replace(/[&<>"]/g, s=>({"&":"&amp;","<":"
 function normalizedText(value){return String(value || '').toLowerCase().replace(/\s+/g, ' ').trim()}
 function inventoryKey(item){return String(item?.product || item?.product_code || item?.id || '').trim()}
 function inventoryRowId(){return `local-${Date.now()}-${Math.random().toString(16).slice(2)}`}
+function deletedInventoryProducts(){
+  try {
+    return new Set(JSON.parse(localStorage.getItem(INVENTORY_DELETED_KEY) || '[]'));
+  } catch (error) {
+    console.warn('Could not read deleted inventory products.', error);
+    return new Set();
+  }
+}
+function rememberDeletedInventory(items){
+  const deleted = deletedInventoryProducts();
+  items.forEach(item => {
+    const product = normalizedText(item.product);
+    if (product) deleted.add(product);
+  });
+  localStorage.setItem(INVENTORY_DELETED_KEY, JSON.stringify([...deleted]));
+}
+function forgetDeletedInventory(product){
+  const deleted = deletedInventoryProducts();
+  deleted.delete(normalizedText(product));
+  localStorage.setItem(INVENTORY_DELETED_KEY, JSON.stringify([...deleted]));
+}
 function setInventoryStatus(message, state = ''){
   if (!inventorySaveStatus) return;
   inventorySaveStatus.textContent = message;
@@ -946,10 +976,13 @@ async function renderArchivedDatabase(){
 }
 
 async function loadSeedInventory(){
+  const deleted = deletedInventoryProducts();
   const stored = localStorage.getItem(INVENTORY_STORAGE_KEY);
   if (stored) {
     try {
-      return JSON.parse(stored).map(normalizeInventoryItem);
+      return JSON.parse(stored)
+        .map(normalizeInventoryItem)
+        .filter(item => !deleted.has(normalizedText(item.product)));
     } catch (error) {
       console.warn('Could not read local inventory.', error);
     }
@@ -958,7 +991,8 @@ async function loadSeedInventory(){
   try {
     const response = await fetch('data/inventory.csv');
     if (!response.ok) throw new Error('Inventory CSV not found.');
-    return csvRowsToInventory(await response.text());
+    return csvRowsToInventory(await response.text())
+      .filter(item => !deleted.has(normalizedText(item.product)));
   } catch (error) {
     console.warn('Could not load inventory seed file.', error);
     return [];
@@ -977,7 +1011,10 @@ async function loadInventory(){
     if (error) throw error;
 
     inventoryBackendAvailable = true;
-    inventoryItems = (data || []).map(normalizeInventoryItem);
+    const deleted = deletedInventoryProducts();
+    inventoryItems = (data || [])
+      .map(normalizeInventoryItem)
+      .filter(item => !deleted.has(normalizedText(item.product)));
 
     if (!inventoryItems.length) {
       inventoryItems = await loadSeedInventory();
@@ -1044,6 +1081,7 @@ function renderInventory(){
     const key = esc(item.id);
     return `
       <tr class="${inventoryNeedsReorder(item) ? 'inventory-low-row' : ''}" data-inventory-id="${key}">
+        <td class="inventory-select-column"><input class="inventory-row-select" type="checkbox" aria-label="Select ${esc(item.product)}" ${selectedInventoryIds.has(String(item.id)) ? 'checked' : ''}></td>
         <td><input data-inventory-field="product_code" value="${esc(item.product_code)}"></td>
         <td><input data-inventory-field="product" value="${esc(item.product)}"></td>
         <td><input data-inventory-field="price" type="number" step="0.01" min="0" value="${esc(item.price)}"></td>
@@ -1065,6 +1103,23 @@ function renderInventory(){
       </tr>
     `;
   }).join('');
+
+  updateInventorySelection(rows);
+}
+
+function updateInventorySelection(visibleRows = null){
+  const rows = visibleRows || [...inventoryBody.querySelectorAll('[data-inventory-id]')]
+    .map(row => inventoryItems.find(item => String(item.id) === String(row.dataset.inventoryId)))
+    .filter(Boolean);
+  const selectedCount = selectedInventoryIds.size;
+  const visibleSelectedCount = rows.filter(item => selectedInventoryIds.has(String(item.id))).length;
+
+  if (inventorySelectedCount) inventorySelectedCount.textContent = selectedCount;
+  if (deleteInventoryBtn) deleteInventoryBtn.disabled = !selectedCount;
+  if (inventorySelectAll) {
+    inventorySelectAll.checked = Boolean(rows.length && visibleSelectedCount === rows.length);
+    inventorySelectAll.indeterminate = Boolean(visibleSelectedCount && visibleSelectedCount < rows.length);
+  }
 }
 
 function inventoryItemFromEvent(target){
@@ -1119,6 +1174,61 @@ async function saveInventoryItem(item){
   setInventoryStatus('Inventory saved.', 'saved');
 }
 
+function openInventoryDeleteModal(){
+  const itemsToDelete = inventoryItems.filter(item => selectedInventoryIds.has(String(item.id)));
+  if (!itemsToDelete.length) return;
+
+  if (inventoryDeleteMessage) {
+    inventoryDeleteMessage.textContent = itemsToDelete.length === 1
+      ? 'This item will be removed from inventory and invoice search.'
+      : `These ${itemsToDelete.length} items will be removed from inventory and invoice search.`;
+  }
+  if (inventoryDeleteModal) inventoryDeleteModal.hidden = false;
+}
+
+function closeInventoryDeleteModal(){
+  if (inventoryDeleteModal) inventoryDeleteModal.hidden = true;
+}
+
+async function deleteSelectedInventory(){
+  const itemsToDelete = inventoryItems.filter(item => selectedInventoryIds.has(String(item.id)));
+  if (!itemsToDelete.length) {
+    closeInventoryDeleteModal();
+    return;
+  }
+
+  rememberDeletedInventory(itemsToDelete);
+  inventoryItems = inventoryItems.filter(item => !selectedInventoryIds.has(String(item.id)));
+  selectedInventoryIds = new Set();
+  localStorage.setItem(INVENTORY_STORAGE_KEY, JSON.stringify(inventoryItems));
+  renderInventory();
+  refreshInventoryDatalists();
+  updateStockWarnings();
+
+  if (!inventoryBackendAvailable) {
+    setInventoryStatus('Inventory items deleted locally.', 'error');
+    closeInventoryDeleteModal();
+    return;
+  }
+
+  setInventoryStatus('Deleting inventory items...', 'saving');
+  const products = itemsToDelete.map(item => item.product).filter(Boolean);
+  const { error } = await supabaseClient
+    .from('inventory')
+    .delete()
+    .in('product', products);
+
+  if (error) {
+    console.error(error);
+    setInventoryStatus('Deleted locally, but Supabase delete failed. Add the inventory delete policy.', 'error');
+    closeInventoryDeleteModal();
+    return;
+  }
+
+  setInventoryStatus('Inventory items deleted.', 'saved');
+  closeInventoryDeleteModal();
+}
+
 function openInventoryAddModal(){
   if (!inventoryAddModal || !inventoryAddForm) return;
   inventoryAddForm.reset();
@@ -1159,6 +1269,7 @@ async function addInventoryFromForm(event){
   });
 
   inventoryItems.unshift(item);
+  forgetDeletedInventory(item.product);
   renderInventory();
   refreshInventoryDatalists();
   updateStockWarnings();
@@ -1489,7 +1600,7 @@ if (archivedSearchInput) archivedSearchInput.addEventListener('input', renderArc
 if (inventorySearchInput) inventorySearchInput.addEventListener('input', renderInventory);
 if (inventoryReorderFilterBtn) {
   inventoryReorderFilterBtn.addEventListener('click', () => {
-    inventoryShowReorderOnly = true;
+    inventoryShowReorderOnly = !inventoryShowReorderOnly;
     renderInventory();
   });
 }
@@ -1500,6 +1611,26 @@ if (inventoryShowAllBtn) {
   });
 }
 if (addInventoryRowBtn) addInventoryRowBtn.addEventListener('click', openInventoryAddModal);
+if (deleteInventoryBtn) deleteInventoryBtn.addEventListener('click', openInventoryDeleteModal);
+if (inventoryDeleteConfirmBtn) inventoryDeleteConfirmBtn.addEventListener('click', deleteSelectedInventory);
+if (inventoryDeleteCancelBtn) inventoryDeleteCancelBtn.addEventListener('click', closeInventoryDeleteModal);
+if (inventoryDeleteModal) {
+  inventoryDeleteModal.addEventListener('click', e => {
+    if (e.target === inventoryDeleteModal) closeInventoryDeleteModal();
+  });
+}
+if (inventorySelectAll) {
+  inventorySelectAll.addEventListener('change', () => {
+    inventoryBody.querySelectorAll('[data-inventory-id]').forEach(row => {
+      if (inventorySelectAll.checked) {
+        selectedInventoryIds.add(String(row.dataset.inventoryId));
+      } else {
+        selectedInventoryIds.delete(String(row.dataset.inventoryId));
+      }
+    });
+    renderInventory();
+  });
+}
 if (inventoryAddForm) inventoryAddForm.addEventListener('submit', addInventoryFromForm);
 if (inventoryAddCancelBtn) inventoryAddCancelBtn.addEventListener('click', closeInventoryAddModal);
 if (inventoryAddModal) {
@@ -1508,6 +1639,18 @@ if (inventoryAddModal) {
   });
 }
 if (inventoryBody) {
+  inventoryBody.addEventListener('change', e => {
+    if (!e.target.classList.contains('inventory-row-select')) return;
+
+    const item = inventoryItemFromEvent(e.target);
+    if (!item) return;
+    if (e.target.checked) {
+      selectedInventoryIds.add(String(item.id));
+    } else {
+      selectedInventoryIds.delete(String(item.id));
+    }
+    updateInventorySelection();
+  });
   inventoryBody.addEventListener('input', e => {
     const field = e.target.dataset.inventoryField;
     if (!field) return;
