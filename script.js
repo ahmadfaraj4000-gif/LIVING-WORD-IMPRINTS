@@ -539,7 +539,7 @@ function updateFilterDisplay(){
   activeDatabaseFilter.hidden = false;
   const labels = [];
   if (databaseFilter) labels.push(databaseFilterLabels[databaseFilter] || 'Filtered Orders');
-  if (databaseSchoolFilter) labels.push(databaseSchoolFilter);
+  if (databaseSchoolFilter) labels.push(databaseSchoolSelect?.selectedOptions[0]?.textContent || databaseSchoolFilter);
   activeDatabaseFilterText.textContent = `Showing: ${labels.join(' / ')}`;
   if (databaseFilterSelect) databaseFilterSelect.value = databaseFilter;
   if (databaseSchoolSelect) databaseSchoolSelect.value = databaseSchoolFilter;
@@ -549,21 +549,26 @@ function populateDatabaseSchools(rows){
   if (!databaseSchoolSelect) return;
 
   const selected = databaseSchoolFilter;
-  const schools = [...new Set(rows
-    .map(row => String(row.school || '').trim())
-    .filter(Boolean))]
-    .sort((a, b) => a.localeCompare(b));
+  const schoolMap = new Map();
+  rows.forEach(row => {
+    const school = String(row.school || '').trim();
+    const key = normalizedText(school);
+    if (!key || schoolMap.has(key)) return;
+    schoolMap.set(key, school);
+  });
+  const schools = [...schoolMap.values()].sort((a, b) => a.localeCompare(b));
+  const selectedKey = normalizedText(selected);
 
   databaseSchoolSelect.innerHTML = '<option value="">All Schools</option>';
   schools.forEach(school => {
     const option = document.createElement('option');
-    option.value = school;
+    option.value = normalizedText(school);
     option.textContent = school;
     databaseSchoolSelect.appendChild(option);
   });
 
-  databaseSchoolSelect.value = schools.includes(selected) ? selected : '';
-  if (selected && databaseSchoolSelect.value !== selected) databaseSchoolFilter = '';
+  databaseSchoolSelect.value = schoolMap.has(selectedKey) ? selectedKey : '';
+  if (selected && databaseSchoolSelect.value !== selectedKey) databaseSchoolFilter = '';
 }
 
 function refreshInventoryDatalists(){
