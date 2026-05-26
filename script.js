@@ -140,6 +140,7 @@ let stockAdjustmentsByInvoice = new Map();
 let appInitialized = false;
 let returningCustomers = [];
 let pendingInvoiceDeleteId = null;
+let inventoryChangesPending = false;
 let reportDateRange = 'thisYear';
 let reportSchoolFilter = '';
 let reportChartLimit = '20';
@@ -694,6 +695,7 @@ function loadCustomerInfoForNewOrder(customer){
 
   editingInvoiceId = null;
   editingInvoiceArchived = false;
+  inventoryChangesPending = false;
   clearOrderFieldsForNewCustomerOrder();
 
   form.school.value = customer.school || '';
@@ -718,6 +720,7 @@ function duplicateOrder(order){
   setForm(order);
   editingInvoiceId = null;
   editingInvoiceArchived = false;
+  inventoryChangesPending = true;
   form.invoiceNumber.value = invoiceNo();
   form.orderDate.value = today();
   form.pickupDate.value = '';
@@ -1089,7 +1092,7 @@ function csvCell(value){
 
 function downloadReportCsv(){
   if (!latestReportRows.length) {
-    alert('No report rows to export.');
+    appNotice('No Report Rows', 'No report rows to export.', 'error');
     return;
   }
 
@@ -1408,6 +1411,44 @@ function queueAutosave(){
   autosaveTimer = setTimeout(autosaveExistingInvoice, 900);
 }
 
+function isInventoryAffectingField(target){
+  const name = target?.name || '';
+  return /^amount_\d+$/.test(name) ||
+    /^description_\d+$/.test(name) ||
+    /^color_\d+$/.test(name) ||
+    /^size_\d+$/.test(name) ||
+    /^price_\d+$/.test(name) ||
+    /^inventory_id_\d+$/.test(name);
+}
+
+function queueFormChange(target){
+  calculate();
+
+  if (editingInvoiceId && isInventoryAffectingField(target)) {
+    inventoryChangesPending = true;
+    clearTimeout(autosaveTimer);
+    setAutosaveStatus('Item changes require Submit / Save.', 'caution');
+    return;
+  }
+
+  queueAutosave();
+}
+
+function invoiceRowForAutosave(){
+  const row = invoiceRowFromForm();
+
+  if (inventoryChangesPending) {
+    delete row.items;
+    delete row.subtotal;
+    delete row.discount;
+    delete row.tax;
+    delete row.total;
+    delete row.balance;
+  }
+
+  return row;
+}
+
 async function autosaveExistingInvoice(){
   if (!editingInvoiceId || isAutosaving) return;
 
@@ -1416,7 +1457,7 @@ async function autosaveExistingInvoice(){
 
   const { error } = await supabaseClient
     .from('invoices')
-    .update(invoiceRowFromForm())
+    .update(invoiceRowForAutosave())
     .eq('id', editingInvoiceId);
 
   isAutosaving = false;
@@ -1476,6 +1517,7 @@ function setForm(data){
 
   editingInvoiceId = data.id || null;
   editingInvoiceArchived = data.archived === true;
+  inventoryChangesPending = false;
   if (editingInvoiceId) {
     stockAdjustmentsByInvoice.set(String(editingInvoiceId), storedNotes.meta[STOCK_META_KEY] || {});
   }
@@ -1796,10 +1838,21 @@ async function saveInventorySeedToSupabase(){
   if (error) throw error;
 }
 
-async function syncInventoryToSupabase(items, mode = 'merge'){
+async function syncInventoryToSupabase(items, mode = 'merge', previousItems = []){
   if (!inventoryBackendAvailable) return true;
 
-  const rows = items.map(item => ({
+  let syncItems = items;
+
+  if (mode === 'replace') {
+    const uploadedProducts = new Set(items.map(item => normalizedText(item.product)));
+    const inactiveMissingItems = previousItems
+      .filter(item => item.product && !uploadedProducts.has(normalizedText(item.product)))
+      .map(item => ({ ...item, status: 'Inactive' }));
+
+    syncItems = [...items, ...inactiveMissingItems];
+  }
+
+  const rows = syncItems.map(item => ({
     product_code: item.product_code,
     product: item.product,
     price: item.price === '' ? null : Number(item.price),
@@ -1809,15 +1862,6 @@ async function syncInventoryToSupabase(items, mode = 'merge'){
     supplier: item.supplier,
     report_color: item.report_color
   }));
-
-  if (mode === 'replace') {
-    const { error: deleteError } = await supabaseClient
-      .from('inventory')
-      .delete()
-      .not('product', 'is', null);
-
-    if (deleteError) throw deleteError;
-  }
 
   if (!rows.length) return true;
 
@@ -1861,6 +1905,7 @@ async function importInventoryCsv(event){
   event.preventDefault();
   const file = inventoryCsvFile?.files?.[0];
   if (!file) return;
+  const previousInventoryItems = [...inventoryItems];
 
   try {
     if (inventoryCsvStatus) {
@@ -1903,7 +1948,7 @@ async function importInventoryCsv(event){
     }
 
     localStorage.setItem(INVENTORY_STORAGE_KEY, JSON.stringify(inventoryItems));
-    await syncInventoryToSupabase(mode === 'replace' ? inventoryItems : importedItems, mode);
+    await syncInventoryToSupabase(importedItems, mode, previousInventoryItems);
     renderInventory();
     refreshInventoryDatalists();
     updateStockWarnings();
@@ -1911,6 +1956,10 @@ async function importInventoryCsv(event){
     closeInventoryCsvModal();
   } catch (error) {
     console.error(error);
+    inventoryItems = previousInventoryItems;
+    localStorage.setItem(INVENTORY_STORAGE_KEY, JSON.stringify(inventoryItems));
+    renderInventory();
+    refreshInventoryDatalists();
     if (inventoryCsvStatus) {
       inventoryCsvStatus.textContent = error instanceof Error ? error.message : 'CSV import failed.';
       inventoryCsvStatus.className = 'autosave-status error';
@@ -2118,7 +2167,7 @@ async function addInventoryFromForm(event){
   const duplicate = inventoryItems.find(item => normalizedText(item.product) === normalizedText(product));
 
   if (duplicate) {
-    alert('That product is already in inventory. Edit the existing inventory row instead.');
+    await appNotice('Inventory Item Exists', 'That product is already in inventory. Edit the existing inventory row instead.', 'error');
     return;
   }
 
@@ -2439,7 +2488,7 @@ async function reconcileInvoiceInventory(invoiceId){
 
   if (error) {
     console.error(error);
-    alert('Invoice saved, but the inventory tracking note could not be updated.');
+    await appNotice('Inventory Tracking Warning', 'Invoice saved, but the inventory tracking note could not be updated.', 'error');
     return false;
   }
 
@@ -2483,7 +2532,7 @@ async function submitInvoice(){
 
   if (error) {
     console.error(error);
-    alert('Save failed.');
+    await appNotice('Save Failed', 'The invoice could not be saved.', 'error');
     return;
   }
 
@@ -2493,8 +2542,9 @@ async function submitInvoice(){
   }
 
   const inventoryTracked = await reconcileInvoiceInventory(editingInvoiceId);
+  if (inventoryTracked) inventoryChangesPending = false;
   if (!inventoryTracked) {
-    alert('Invoice saved, but inventory stock was not fully updated. Please check the Inventory tab.');
+    await appNotice('Inventory Warning', 'Invoice saved, but inventory stock was not fully updated. Please check the Inventory tab.', 'error');
   }
 
   setAutosaveStatus(wasEditing ? 'Saved manually. Autosave still on.' : 'Invoice saved. Autosave is on for this invoice.', 'saved');
@@ -2505,26 +2555,29 @@ async function submitInvoice(){
   await renderDashboard();
   await renderReports();
   
-  const settings = appSettings();
-  let shouldEmail = Boolean(settings.sendReceivedEmail);
+  if (!wasEditing) {
+    const settings = appSettings();
+    let shouldEmail = Boolean(settings.sendReceivedEmail);
 
-  if (shouldEmail && settings.askReceivedEmail) {
-    shouldEmail = await appConfirm(
-      'Invoice Saved',
-      'Send confirmation email to the customer?',
-      'Send Email',
-      'Not Now'
-    );
-  }
+    if (shouldEmail && settings.askReceivedEmail) {
+      shouldEmail = await appConfirm(
+        'Invoice Saved',
+        'Send confirmation email to the customer?',
+        'Send Email',
+        'Not Now'
+      );
+    }
 
-  if (shouldEmail) {
-    await sendInvoiceEmail('order_received');
+    if (shouldEmail) {
+      await sendInvoiceEmail('order_received');
+    }
   }
 }
 function newInvoice(){
   form.reset();
   editingInvoiceId = null;
   editingInvoiceArchived = false;
+  inventoryChangesPending = false;
   itemCount = 3;
   createRows();
   form.orderDate.value = today();
@@ -2611,11 +2664,12 @@ form.addEventListener('input', e => {
   if (e.target.classList.contains('inventory-picker-search')) return;
   if (e.target.name?.startsWith('description_')) handleInventoryLineSelection(e.target);
   if (e.target.name?.startsWith('amount_')) updateStockWarnings();
-  queueAutosave();
+  queueFormChange(e.target);
 });
 form.addEventListener('change', e => {
   if (e.target.name?.startsWith('description_')) handleInventoryLineSelection(e.target);
   if (e.target.name?.startsWith('amount_')) updateStockWarnings();
+  queueFormChange(e.target);
 });
 itemsEditor.addEventListener('click', e => {
   const openButton = e.target.closest('[data-open-inventory-picker]');
@@ -2631,7 +2685,7 @@ itemsEditor.addEventListener('click', e => {
   if (!item) return;
   selectInventoryItem(choice.dataset.inventoryIndex, item);
   closeInventoryPickers();
-  queueAutosave();
+  queueFormChange(form.elements[`description_${choice.dataset.inventoryIndex}`]);
 });
 itemsEditor.addEventListener('input', e => {
   if (!e.target.classList.contains('inventory-picker-search')) return;
@@ -2839,7 +2893,7 @@ databaseBody.addEventListener('change', async e => {
 
     if (error) {
       console.error(error);
-      alert('Failed to update status');
+      await appNotice('Status Update Failed', 'Failed to update status.', 'error');
       return;
     }
 
@@ -2894,7 +2948,7 @@ databaseBody.addEventListener('input', async e => {
 
       if (error) {
         console.error(error);
-        alert('Failed to update notes');
+        await appNotice('Notes Update Failed', 'Failed to update notes.', 'error');
         return;
       }
 
@@ -2913,7 +2967,7 @@ async function loadInvoiceForEdit(id){
 
   if (error) {
     console.error(error);
-    alert('Failed to load invoice.');
+    await appNotice('Load Failed', 'Failed to load invoice.', 'error');
     return;
   }
 
@@ -2932,7 +2986,7 @@ async function setArchivedStatus(id, archived){
 
   if (error) {
     console.error(error);
-    alert(archived ? 'Failed to archive invoice.' : 'Failed to restore invoice.');
+    await appNotice('Update Failed', archived ? 'Failed to archive invoice.' : 'Failed to restore invoice.', 'error');
     return;
   }
 
@@ -3004,9 +3058,6 @@ async function deleteSavedInvoice(){
   }
 
   const shouldRestoreInventory = Boolean(invoiceDeleteRestoreInventory?.checked);
-  const inventoryRestored = shouldRestoreInventory
-    ? await restoreInventoryForDeletedInvoice(invoice)
-    : true;
 
   const { error } = await supabaseClient
     .from('invoices')
@@ -3018,6 +3069,10 @@ async function deleteSavedInvoice(){
     await appNotice('Delete Failed', 'Supabase could not delete this saved order. Check delete permissions for the invoices table.', 'error');
     return;
   }
+
+  const inventoryRestored = shouldRestoreInventory
+    ? await restoreInventoryForDeletedInvoice(invoice)
+    : true;
 
   cachedAllInvoices = cachedAllInvoices.filter(row => String(row.id) !== String(id));
   cachedInvoices = cachedInvoices.filter(row => String(row.id) !== String(id));
