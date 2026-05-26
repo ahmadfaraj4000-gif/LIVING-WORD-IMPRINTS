@@ -52,8 +52,13 @@ const inventoryDeleteCancelBtn = document.getElementById('inventoryDeleteCancelB
 const inventoryDeleteConfirmBtn = document.getElementById('inventoryDeleteConfirmBtn');
 const reportDateFilter = document.getElementById('reportDateFilter');
 const reportSchoolSelect = document.getElementById('reportSchoolSelect');
+const reportLimitSelect = document.getElementById('reportLimitSelect');
+const reportIncludeArchived = document.getElementById('reportIncludeArchived');
+const exportReportBtn = document.getElementById('exportReportBtn');
 const reportDemandChart = document.getElementById('reportDemandChart');
 const reportDemandBody = document.getElementById('reportDemandBody');
+const reportSizeBody = document.getElementById('reportSizeBody');
+const reportSchoolBody = document.getElementById('reportSchoolBody');
 const reportsSummary = document.getElementById('reportsSummary');
 const dashboardIds = {
   dueToday: document.getElementById('dashDueToday'),
@@ -92,6 +97,9 @@ let stockAdjustmentsByInvoice = new Map();
 let appInitialized = false;
 let reportDateRange = 'thisYear';
 let reportSchoolFilter = '';
+let reportChartLimit = '20';
+let reportIncludesArchived = true;
+let latestReportRows = [];
 const INVENTORY_STORAGE_KEY = 'lwi_inventory_items_v1';
 const INVENTORY_DELETED_KEY = 'lwi_inventory_deleted_products_v1';
 const STOCK_META_KEY = 'stockAdjustments';
@@ -706,28 +714,136 @@ function demandReportRows(rows){
     .sort((a, b) => b.quantity - a.quantity || a.label.localeCompare(b.label));
 }
 
-async function renderReports(){
-  if (!reportDemandChart || !reportDemandBody) return;
+function filteredReportInvoices(rows){
+  return rows.filter(rowMatchesReportFilters);
+}
 
-  const rows = await getInvoices();
+function sizeBreakdownRows(demandRows, totalQuantity){
+  const totals = new Map();
+
+  demandRows.forEach(row => {
+    const size = row.size || 'Not listed';
+    const existing = totals.get(size) || { size, quantity: 0 };
+    existing.quantity += row.quantity;
+    totals.set(size, existing);
+  });
+
+  return [...totals.values()]
+    .map(row => ({
+      ...row,
+      percent: totalQuantity ? Math.round((row.quantity / totalQuantity) * 100) : 0
+    }))
+    .sort((a, b) => b.quantity - a.quantity || a.size.localeCompare(b.size));
+}
+
+function schoolDemandRows(rows){
+  const totals = new Map();
+
+  filteredReportInvoices(rows).forEach(row => {
+    const school = String(row.school || 'Not listed').trim() || 'Not listed';
+    const invoiceKey = String(row.id || row.invoice_number || `${row.parent_name || ''}-${reportDateForRow(row)}`);
+    const existing = totals.get(school) || {
+      school,
+      quantity: 0,
+      invoices: new Set(),
+      itemTotals: new Map()
+    };
+
+    reportItemsForRow(row).forEach(item => {
+      const quantity = Number(item.amount) || 0;
+      if (quantity <= 0) return;
+
+      const display = reportItemDisplay(item);
+      existing.quantity += quantity;
+      existing.invoices.add(invoiceKey);
+      existing.itemTotals.set(display.label, (existing.itemTotals.get(display.label) || 0) + quantity);
+    });
+
+    if (existing.quantity > 0) totals.set(school, existing);
+  });
+
+  return [...totals.values()]
+    .map(row => {
+      const topItem = [...row.itemTotals.entries()]
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] || 'None';
+
+      return {
+        school: row.school,
+        quantity: row.quantity,
+        invoiceCount: row.invoices.size,
+        topItem
+      };
+    })
+    .sort((a, b) => b.quantity - a.quantity || a.school.localeCompare(b.school));
+}
+
+function visibleChartRows(demandRows){
+  if (reportChartLimit === 'all') return demandRows;
+  return demandRows.slice(0, Number(reportChartLimit) || 20);
+}
+
+function csvCell(value){
+  return `"${String(value ?? '').replace(/"/g, '""')}"`;
+}
+
+function downloadReportCsv(){
+  if (!latestReportRows.length) {
+    alert('No report rows to export.');
+    return;
+  }
+
+  const header = ['Item', 'Color', 'Size', 'Quantity Ordered', 'Orders'];
+  const rows = latestReportRows.map(row => [
+    row.description,
+    row.color || '',
+    row.size || '',
+    row.quantity,
+    row.orderCount
+  ]);
+  const csv = [header, ...rows].map(row => row.map(csvCell).join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = `living-word-demand-report-${today()}.csv`;
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
+async function renderReports(){
+  if (!reportDemandChart || !reportDemandBody || !reportSizeBody || !reportSchoolBody) return;
+
+  const rows = reportIncludesArchived ? await getAllInvoices() : await getInvoices();
   populateReportSchools(rows);
 
   if (reportDateFilter) reportDateFilter.value = reportDateRange;
+  if (reportLimitSelect) reportLimitSelect.value = reportChartLimit;
+  if (reportIncludeArchived) reportIncludeArchived.checked = reportIncludesArchived;
   const demandRows = demandReportRows(rows);
+  latestReportRows = demandRows;
+  const chartRows = visibleChartRows(demandRows);
+  const sizeRows = sizeBreakdownRows(demandRows, demandRows.reduce((sum, row) => sum + row.quantity, 0));
+  const schoolRows = schoolDemandRows(rows);
   const totalQuantity = demandRows.reduce((sum, row) => sum + row.quantity, 0);
   const topItem = demandRows[0]?.label || 'None';
-  const maxQuantity = Math.max(...demandRows.map(row => row.quantity), 0);
+  const topSize = sizeRows[0]?.size || 'None';
+  const topSchool = schoolRows[0]?.school || 'None';
+  const invoiceCount = new Set(filteredReportInvoices(rows).map(row => String(row.id || row.invoice_number))).size;
+  const averagePerOrder = invoiceCount ? Math.round(totalQuantity / invoiceCount) : 0;
+  const maxQuantity = Math.max(...chartRows.map(row => row.quantity), 0);
 
   if (reportsSummary) {
     reportsSummary.innerHTML = `
       <div><span>Total Items Ordered</span><strong>${esc(totalQuantity)}</strong></div>
       <div><span>Unique Ordered Items</span><strong>${esc(demandRows.length)}</strong></div>
       <div><span>Top Item</span><strong>${esc(topItem)}</strong></div>
+      <div><span>Top Size</span><strong>${esc(topSize)}</strong></div>
+      <div><span>Top School</span><strong>${esc(topSchool)}</strong></div>
+      <div><span>Avg Items Per Invoice</span><strong>${esc(averagePerOrder)}</strong></div>
     `;
   }
 
-  reportDemandChart.innerHTML = demandRows.length
-    ? demandRows.map(row => {
+  reportDemandChart.innerHTML = chartRows.length
+    ? chartRows.map(row => {
         const height = maxQuantity ? Math.max(8, Math.round((row.quantity / maxQuantity) * 100)) : 0;
         return `
           <div class="report-bar-item">
@@ -739,6 +855,27 @@ async function renderReports(){
         `;
       }).join('')
     : '<p class="report-empty">No ordered items match these filters.</p>';
+
+  reportSizeBody.innerHTML = sizeRows.length
+    ? sizeRows.map(row => `
+        <tr>
+          <td>${esc(row.size)}</td>
+          <td>${esc(row.quantity)}</td>
+          <td>${esc(row.percent)}%</td>
+        </tr>
+      `).join('')
+    : '<tr><td colspan="3">No size demand matches these filters.</td></tr>';
+
+  reportSchoolBody.innerHTML = schoolRows.length
+    ? schoolRows.map(row => `
+        <tr>
+          <td>${esc(row.school)}</td>
+          <td>${esc(row.quantity)}</td>
+          <td>${esc(row.invoiceCount)}</td>
+          <td>${esc(row.topItem)}</td>
+        </tr>
+      `).join('')
+    : '<tr><td colspan="4">No school demand matches these filters.</td></tr>';
 
   reportDemandBody.innerHTML = demandRows.length
     ? demandRows.map(row => `
@@ -1735,6 +1872,19 @@ if (reportSchoolSelect) {
     renderReports();
   });
 }
+if (reportLimitSelect) {
+  reportLimitSelect.addEventListener('change', () => {
+    reportChartLimit = reportLimitSelect.value;
+    renderReports();
+  });
+}
+if (reportIncludeArchived) {
+  reportIncludeArchived.addEventListener('change', () => {
+    reportIncludesArchived = reportIncludeArchived.checked;
+    renderReports();
+  });
+}
+if (exportReportBtn) exportReportBtn.addEventListener('click', downloadReportCsv);
 if (clearDatabaseFilterBtn) {
   clearDatabaseFilterBtn.addEventListener('click', () => {
     databaseFilter = '';

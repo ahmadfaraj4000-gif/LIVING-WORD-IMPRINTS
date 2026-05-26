@@ -112,6 +112,15 @@
                 <option value="">All Schools</option>
               </select>
             </label>
+            <label>Chart Items
+              <select id="reportLimitSelect">
+                <option value="20">Top 20</option>
+                <option value="10">Top 10</option>
+                <option value="all">Show All</option>
+              </select>
+            </label>
+            <label class="report-check"><input id="reportIncludeArchived" type="checkbox" checked> Include archived</label>
+            <button class="ghost" id="exportReportBtn" type="button">Export CSV</button>
           </div>
         </div>
 
@@ -127,6 +136,32 @@
           </div>
           <div class="report-chart-wrap">
             <div class="report-chart" id="reportDemandChart"></div>
+          </div>
+        </div>
+
+        <div class="reports-grid">
+          <div class="reports-panel">
+            <div class="reports-panel-head">
+              <h2>Size Breakdown</h2>
+            </div>
+            <div class="table-wrap">
+              <table class="db-table report-table">
+                <thead><tr><th>Size</th><th>Quantity Ordered</th><th>Percent</th></tr></thead>
+                <tbody id="reportSizeBody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="reports-panel">
+            <div class="reports-panel-head">
+              <h2>School Demand</h2>
+            </div>
+            <div class="table-wrap">
+              <table class="db-table report-table">
+                <thead><tr><th>School</th><th>Items Ordered</th><th>Invoices</th><th>Top Item</th></tr></thead>
+                <tbody id="reportSchoolBody"></tbody>
+              </table>
+            </div>
           </div>
         </div>
 
