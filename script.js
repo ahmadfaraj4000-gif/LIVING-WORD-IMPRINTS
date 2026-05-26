@@ -22,6 +22,7 @@ const activeDatabaseFilterText = document.getElementById('activeDatabaseFilterTe
 const clearDatabaseFilterBtn = document.getElementById('clearDatabaseFilterBtn');
 const databaseFilterSelect = document.getElementById('databaseFilterSelect');
 const databaseSchoolSelect = document.getElementById('databaseSchoolSelect');
+const schoolSuggestions = document.getElementById('schoolSuggestions');
 const dashboardPanelTitle = document.getElementById('dashboardPanelTitle');
 const clearDashboardFilterBtn = document.getElementById('clearDashboardFilterBtn');
 const voucherModal = document.getElementById('voucherModal');
@@ -614,6 +615,23 @@ function populateDatabaseSchools(rows){
   if (selected && databaseSchoolSelect.value !== selectedKey) databaseSchoolFilter = '';
 }
 
+function populateSchoolSuggestions(rows = cachedAllInvoices){
+  if (!schoolSuggestions) return;
+
+  const schoolMap = new Map();
+  rows.forEach(row => {
+    const school = String(row.school || '').replace(/\s+/g, ' ').trim();
+    const key = normalizedText(school);
+    if (!key) return;
+    schoolMap.set(key, school);
+  });
+
+  schoolSuggestions.innerHTML = [...schoolMap.values()]
+    .sort((a, b) => a.localeCompare(b))
+    .map(school => `<option value="${esc(school)}"></option>`)
+    .join('');
+}
+
 function populateReportSchools(rows){
   if (!reportSchoolSelect) return;
 
@@ -741,8 +759,9 @@ function schoolDemandRows(rows){
 
   filteredReportInvoices(rows).forEach(row => {
     const school = String(row.school || 'Not listed').trim() || 'Not listed';
+    const schoolKey = normalizedText(school);
     const invoiceKey = String(row.id || row.invoice_number || `${row.parent_name || ''}-${reportDateForRow(row)}`);
-    const existing = totals.get(school) || {
+    const existing = totals.get(schoolKey) || {
       school,
       quantity: 0,
       invoices: new Set(),
@@ -759,7 +778,7 @@ function schoolDemandRows(rows){
       existing.itemTotals.set(display.label, (existing.itemTotals.get(display.label) || 0) + quantity);
     });
 
-    if (existing.quantity > 0) totals.set(school, existing);
+    if (existing.quantity > 0) totals.set(schoolKey, existing);
   });
 
   return [...totals.values()]
@@ -1643,6 +1662,7 @@ async function populateCustomers(){
   const rows = await getAllInvoices();
 
   customerSelect.innerHTML = '<option value="">Select saved customer...</option>';
+  populateSchoolSuggestions(rows);
 
   rows.forEach((x, i) => {
     const opt = document.createElement('option');
@@ -1653,6 +1673,7 @@ async function populateCustomers(){
 }
 function validateInvoice(){
   form.phone.value = formatPhoneNumber(form.phone.value);
+  form.school.value = String(form.school.value || '').replace(/\s+/g, ' ').trim();
 
   const requiredFields = [
     form.school,

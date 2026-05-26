@@ -193,7 +193,7 @@
 
           <h3>Customer Information</h3>
           <div class="form-grid two">
-            <label>School<input name="school" required></label>
+            <label>School<input name="school" list="schoolSuggestions" autocomplete="off" required></label>
             <label>Student Name<input name="studentName"></label>
             <label>Parent First Name<input name="parentFirstName" required></label>
             <label>Parent Last Name<input name="parentLastName" required></label>
@@ -326,6 +326,7 @@
       </section>
     </section>
   </main>
+  <datalist id="schoolSuggestions"></datalist>
   <div class="modal-backdrop no-print" id="voucherModal" hidden>
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="voucherModalTitle">
       <div class="modal-head">
