@@ -20,6 +20,7 @@
         <button class="primary" id="adminLoginBtn" type="submit">Log In</button>
       </form>
       <p class="auth-error" id="adminLoginError" hidden></p>
+      <p class="auth-link"><a href="status.html">Customer order status page</a></p>
     </section>
   </main>
 
@@ -41,6 +42,7 @@
         <button class="tab active" data-view="dashboard" type="button">Dashboard</button>
         <button class="tab" data-view="edit" type="button">Edit</button>
         <button class="tab" data-view="preview" type="button">Preview</button>
+        <button class="tab" data-view="reports" type="button">Reports</button>
         <button class="tab" data-view="inventory" type="button">Inventory</button>
         <button class="tab" data-view="database" type="button">Database</button>
         <button class="tab" data-view="archived" type="button">Archived</button>
@@ -87,6 +89,56 @@
           </div>
           <div id="dashboardAttentionList" class="attention-list">
             <p>No late orders right now.</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="reportsView" class="view no-print">
+        <div class="reports-head">
+          <div>
+            <h1>Reports</h1>
+            <p>Item demand by saved invoice quantity.</p>
+          </div>
+          <div class="reports-filters">
+            <label>Date Range
+              <select id="reportDateFilter">
+                <option value="thisYear">This Year</option>
+                <option value="lastYear">Last Year</option>
+                <option value="allTime">All Time</option>
+              </select>
+            </label>
+            <label>School
+              <select id="reportSchoolSelect">
+                <option value="">All Schools</option>
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <div class="reports-summary" id="reportsSummary">
+          <div><span>Total Items Ordered</span><strong>0</strong></div>
+          <div><span>Unique Ordered Items</span><strong>0</strong></div>
+          <div><span>Top Item</span><strong>None</strong></div>
+        </div>
+
+        <div class="reports-panel">
+          <div class="reports-panel-head">
+            <h2>Ordered Quantities</h2>
+          </div>
+          <div class="report-chart-wrap">
+            <div class="report-chart" id="reportDemandChart"></div>
+          </div>
+        </div>
+
+        <div class="reports-panel">
+          <div class="reports-panel-head">
+            <h2>Demand Table</h2>
+          </div>
+          <div class="table-wrap">
+            <table class="db-table report-table">
+              <thead><tr><th>Item</th><th>Color</th><th>Size</th><th>Quantity Ordered</th><th>Orders</th></tr></thead>
+              <tbody id="reportDemandBody"></tbody>
+            </table>
           </div>
         </div>
       </section>

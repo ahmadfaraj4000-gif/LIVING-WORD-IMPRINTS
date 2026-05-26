@@ -50,6 +50,11 @@ const inventoryDeleteModal = document.getElementById('inventoryDeleteModal');
 const inventoryDeleteMessage = document.getElementById('inventoryDeleteMessage');
 const inventoryDeleteCancelBtn = document.getElementById('inventoryDeleteCancelBtn');
 const inventoryDeleteConfirmBtn = document.getElementById('inventoryDeleteConfirmBtn');
+const reportDateFilter = document.getElementById('reportDateFilter');
+const reportSchoolSelect = document.getElementById('reportSchoolSelect');
+const reportDemandChart = document.getElementById('reportDemandChart');
+const reportDemandBody = document.getElementById('reportDemandBody');
+const reportsSummary = document.getElementById('reportsSummary');
 const dashboardIds = {
   dueToday: document.getElementById('dashDueToday'),
   lateOrders: document.getElementById('dashLateOrders'),
@@ -85,6 +90,8 @@ let inventorySaveTimer = null;
 let selectedInventoryIds = new Set();
 let stockAdjustmentsByInvoice = new Map();
 let appInitialized = false;
+let reportDateRange = 'thisYear';
+let reportSchoolFilter = '';
 const INVENTORY_STORAGE_KEY = 'lwi_inventory_items_v1';
 const INVENTORY_DELETED_KEY = 'lwi_inventory_deleted_products_v1';
 const STOCK_META_KEY = 'stockAdjustments';
@@ -599,6 +606,153 @@ function populateDatabaseSchools(rows){
   if (selected && databaseSchoolSelect.value !== selectedKey) databaseSchoolFilter = '';
 }
 
+function populateReportSchools(rows){
+  if (!reportSchoolSelect) return;
+
+  const selected = reportSchoolFilter;
+  const schoolMap = new Map();
+  rows.forEach(row => {
+    const school = String(row.school || '').trim();
+    const key = normalizedText(school);
+    if (!key || schoolMap.has(key)) return;
+    schoolMap.set(key, school);
+  });
+
+  reportSchoolSelect.innerHTML = '<option value="">All Schools</option>';
+  [...schoolMap.values()].sort((a, b) => a.localeCompare(b)).forEach(school => {
+    const option = document.createElement('option');
+    option.value = normalizedText(school);
+    option.textContent = school;
+    reportSchoolSelect.appendChild(option);
+  });
+
+  reportSchoolSelect.value = schoolMap.has(normalizedText(selected)) ? normalizedText(selected) : '';
+  if (selected && reportSchoolSelect.value !== normalizedText(selected)) reportSchoolFilter = '';
+}
+
+function reportDateForRow(row){
+  return String(row.order_date || row.date_submitted || row.created_at || '').slice(0, 10);
+}
+
+function rowMatchesReportFilters(row){
+  const orderDate = reportDateForRow(row);
+  const year = Number(orderDate.slice(0, 4));
+  const currentYear = new Date().getFullYear();
+  const schoolMatches = !reportSchoolFilter || normalizedText(row.school) === normalizedText(reportSchoolFilter);
+
+  if (!schoolMatches) return false;
+  if (reportDateRange === 'thisYear') return year === currentYear;
+  if (reportDateRange === 'lastYear') return year === currentYear - 1;
+  return true;
+}
+
+function reportItemDisplay(item){
+  const inventoryMatch = item.inventory_id
+    ? inventoryItems.find(row => String(inventoryKey(row)) === String(item.inventory_id))
+    : null;
+  const description = String(inventoryMatch?.product || item.description || '').trim();
+  const color = String(item.color || '').trim();
+  const size = String(item.size || '').trim();
+
+  return {
+    description: description || 'Unnamed Item',
+    color,
+    size,
+    label: [description || 'Unnamed Item', color, size].filter(Boolean).join(' / ')
+  };
+}
+
+function reportItemsForRow(row){
+  if (Array.isArray(row.items)) return row.items;
+
+  try {
+    const parsed = JSON.parse(row.items || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    console.warn('Could not read report items for invoice.', row.invoice_number, error);
+    return [];
+  }
+}
+
+function demandReportRows(rows){
+  const totals = new Map();
+
+  rows.filter(rowMatchesReportFilters).forEach(row => {
+    const invoiceKey = row.id || row.invoice_number || `${row.parent_name || ''}-${reportDateForRow(row)}`;
+    const items = reportItemsForRow(row);
+
+    items.forEach(item => {
+      const quantity = Number(item.amount) || 0;
+      if (quantity <= 0) return;
+
+      const display = reportItemDisplay(item);
+      const key = item.inventory_id
+        ? `inventory:${item.inventory_id}`
+        : `typed:${normalizedText(display.description)}|${normalizedText(display.color)}|${normalizedText(display.size)}`;
+      const existing = totals.get(key) || {
+        ...display,
+        quantity: 0,
+        orders: new Set()
+      };
+
+      existing.quantity += quantity;
+      existing.orders.add(String(invoiceKey));
+      totals.set(key, existing);
+    });
+  });
+
+  return [...totals.values()]
+    .map(row => ({ ...row, orderCount: row.orders.size }))
+    .sort((a, b) => b.quantity - a.quantity || a.label.localeCompare(b.label));
+}
+
+async function renderReports(){
+  if (!reportDemandChart || !reportDemandBody) return;
+
+  const rows = await getInvoices();
+  populateReportSchools(rows);
+
+  if (reportDateFilter) reportDateFilter.value = reportDateRange;
+  const demandRows = demandReportRows(rows);
+  const totalQuantity = demandRows.reduce((sum, row) => sum + row.quantity, 0);
+  const topItem = demandRows[0]?.label || 'None';
+  const maxQuantity = Math.max(...demandRows.map(row => row.quantity), 0);
+
+  if (reportsSummary) {
+    reportsSummary.innerHTML = `
+      <div><span>Total Items Ordered</span><strong>${esc(totalQuantity)}</strong></div>
+      <div><span>Unique Ordered Items</span><strong>${esc(demandRows.length)}</strong></div>
+      <div><span>Top Item</span><strong>${esc(topItem)}</strong></div>
+    `;
+  }
+
+  reportDemandChart.innerHTML = demandRows.length
+    ? demandRows.map(row => {
+        const height = maxQuantity ? Math.max(8, Math.round((row.quantity / maxQuantity) * 100)) : 0;
+        return `
+          <div class="report-bar-item">
+            <div class="report-bar-track">
+              <div class="report-bar" style="height:${height}%"><span>${esc(row.quantity)}</span></div>
+            </div>
+            <div class="report-bar-label" title="${esc(row.label)}">${esc(row.label)}</div>
+          </div>
+        `;
+      }).join('')
+    : '<p class="report-empty">No ordered items match these filters.</p>';
+
+  reportDemandBody.innerHTML = demandRows.length
+    ? demandRows.map(row => `
+        <tr>
+          <td>${esc(row.description)}</td>
+          <td>${esc(row.color || '')}</td>
+          <td>${esc(row.size || '')}</td>
+          <td>${esc(row.quantity)}</td>
+          <td>${esc(row.orderCount)}</td>
+        </tr>
+      `).join('')
+    : '<tr><td colspan="5">No ordered items match these filters.</td></tr>';
+}
+
 function refreshInventoryDatalists(){
   itemsEditor.querySelectorAll('.inventory-picker-search').forEach(search => {
     renderInventoryPickerResults(search.dataset.inventoryPickerSearch, search.value);
@@ -827,6 +981,7 @@ async function autosaveExistingInvoice(){
   await renderDatabase();
   await renderArchivedDatabase();
   await renderDashboard();
+  await renderReports();
 }
 
 function setForm(data){
@@ -1515,6 +1670,7 @@ async function submitInvoice(){
   await renderDatabase();
   await renderArchivedDatabase();
   await renderDashboard();
+  await renderReports();
 
   alert('Invoice saved successfully.');
 }
@@ -1539,9 +1695,10 @@ function newInvoice(){
   setAutosaveStatus('Manual save required for new invoices.');
   calculate();
   updateVoucherEditControl();
+  document.querySelector('[data-view="edit"]')?.click();
 }
 
-document.querySelectorAll('.tab').forEach(btn=>btn.addEventListener('click',()=>{document.querySelectorAll('.tab,.view').forEach(x=>x.classList.remove('active'));btn.classList.add('active');document.getElementById(btn.dataset.view+'View').classList.add('active');renderPreview();renderDatabase();renderArchivedDatabase();renderDashboard();renderInventory();}));
+document.querySelectorAll('.tab').forEach(btn=>btn.addEventListener('click',()=>{document.querySelectorAll('.tab,.view').forEach(x=>x.classList.remove('active'));btn.classList.add('active');document.getElementById(btn.dataset.view+'View').classList.add('active');renderPreview();renderDatabase();renderArchivedDatabase();renderDashboard();renderReports();renderInventory();}));
 document.querySelectorAll('.filter-card').forEach(card => {
   card.addEventListener('click', () => {
     dashboardFilter = card.dataset.dashboardFilter;
@@ -1564,6 +1721,18 @@ if (databaseSchoolSelect) {
   databaseSchoolSelect.addEventListener('change', () => {
     databaseSchoolFilter = databaseSchoolSelect.value;
     renderDatabase();
+  });
+}
+if (reportDateFilter) {
+  reportDateFilter.addEventListener('change', () => {
+    reportDateRange = reportDateFilter.value;
+    renderReports();
+  });
+}
+if (reportSchoolSelect) {
+  reportSchoolSelect.addEventListener('change', () => {
+    reportSchoolFilter = reportSchoolSelect.value;
+    renderReports();
   });
 }
 if (clearDatabaseFilterBtn) {
@@ -1772,6 +1941,7 @@ databaseBody.addEventListener('change', async e => {
     await renderDatabase();
     await renderArchivedDatabase();
     await renderDashboard();
+    await renderReports();
   }
 });
 
@@ -1841,6 +2011,7 @@ async function setArchivedStatus(id, archived){
   await renderDatabase();
   await renderArchivedDatabase();
   await renderDashboard();
+  await renderReports();
 
   if (String(editingInvoiceId) === String(id)) {
     editingInvoiceArchived = archived;
@@ -1984,6 +2155,7 @@ async function init(){
   await renderDatabase();
   await renderArchivedDatabase();
   await renderDashboard();
+  await renderReports();
 }
 
 async function handleAuthSession(session){
