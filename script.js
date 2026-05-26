@@ -12,6 +12,12 @@ const itemsEditor = document.getElementById('itemsEditor');
 const previewPaper = document.getElementById('previewPaper');
 const databaseBody = document.getElementById('databaseBody');
 const customerSelect = document.getElementById('customerSelect');
+const customerDropdown = document.getElementById('customerDropdown');
+const customerDropdownBtn = document.getElementById('customerDropdownBtn');
+const customerDropdownMenu = document.getElementById('customerDropdownMenu');
+const customerDropdownResults = document.getElementById('customerDropdownResults');
+const customerSearch = document.getElementById('customerSearch');
+const customerSearchBtn = document.getElementById('customerSearchBtn');
 const searchInput = document.getElementById('searchInput');
 const customerHistory = document.getElementById('customerHistory');
 const archivedBody = document.getElementById('archivedBody');
@@ -34,6 +40,12 @@ const voucherDetailsModal = document.getElementById('voucherDetailsModal');
 const voucherDetailsId = document.getElementById('voucherDetailsId');
 const voucherDetailsProvider = document.getElementById('voucherDetailsProvider');
 const voucherDetailsAmount = document.getElementById('voucherDetailsAmount');
+const appMessageModal = document.getElementById('appMessageModal');
+const appMessageCard = appMessageModal?.querySelector('.app-message-card');
+const appMessageTitle = document.getElementById('appMessageTitle');
+const appMessageText = document.getElementById('appMessageText');
+const appMessageCancelBtn = document.getElementById('appMessageCancelBtn');
+const appMessageConfirmBtn = document.getElementById('appMessageConfirmBtn');
 const inventoryBody = document.getElementById('inventoryBody');
 const inventorySearchInput = document.getElementById('inventorySearchInput');
 const inventoryReorderFilterBtn = document.getElementById('inventoryReorderFilterBtn');
@@ -61,6 +73,22 @@ const reportDemandBody = document.getElementById('reportDemandBody');
 const reportSizeBody = document.getElementById('reportSizeBody');
 const reportSchoolBody = document.getElementById('reportSchoolBody');
 const reportsSummary = document.getElementById('reportsSummary');
+const employeeForm = document.getElementById('employeeForm');
+const employeeNameInput = document.getElementById('employeeNameInput');
+const employeeList = document.getElementById('employeeList');
+const taxSettingsForm = document.getElementById('taxSettingsForm');
+const taxRateInput = document.getElementById('taxRateInput');
+const taxRateLabel = document.getElementById('taxRateLabel');
+const sendReceivedEmailSetting = document.getElementById('sendReceivedEmailSetting');
+const askReceivedEmailSetting = document.getElementById('askReceivedEmailSetting');
+const sendCompletedEmailSetting = document.getElementById('sendCompletedEmailSetting');
+const askCompletedEmailSetting = document.getElementById('askCompletedEmailSetting');
+const paymentTypeForm = document.getElementById('paymentTypeForm');
+const paymentTypeInput = document.getElementById('paymentTypeInput');
+const paymentTypeList = document.getElementById('paymentTypeList');
+const orderStatusForm = document.getElementById('orderStatusForm');
+const orderStatusInput = document.getElementById('orderStatusInput');
+const orderStatusList = document.getElementById('orderStatusList');
 const dashboardIds = {
   dueToday: document.getElementById('dashDueToday'),
   lateOrders: document.getElementById('dashLateOrders'),
@@ -96,6 +124,7 @@ let inventorySaveTimer = null;
 let selectedInventoryIds = new Set();
 let stockAdjustmentsByInvoice = new Map();
 let appInitialized = false;
+let returningCustomers = [];
 let reportDateRange = 'thisYear';
 let reportSchoolFilter = '';
 let reportChartLimit = '20';
@@ -104,6 +133,20 @@ let latestReportRows = [];
 const INVENTORY_STORAGE_KEY = 'lwi_inventory_items_v1';
 const INVENTORY_DELETED_KEY = 'lwi_inventory_deleted_products_v1';
 const STOCK_META_KEY = 'stockAdjustments';
+const EMPLOYEES_STORAGE_KEY = 'lwi_employee_names_v1';
+const DEFAULT_EMPLOYEES = ['Herman Todd', 'Serina Todd'];
+const SETTINGS_STORAGE_KEY = 'lwi_invoice_settings_v1';
+const DEFAULT_SETTINGS = {
+  taxRate: 6.35,
+  paymentTypes: ['Card', 'Cash', 'Voucher'],
+  orderStatuses: ['Received', 'In Progress', 'Completed'],
+  sendReceivedEmail: true,
+  askReceivedEmail: true,
+  sendCompletedEmail: true,
+  askCompletedEmail: true
+};
+const REQUIRED_STATUSES = ['Received', 'In Progress', 'Completed'];
+const REQUIRED_PAYMENT_TYPES = ['Voucher'];
 const INVENTORY_COLUMNS = [
   'Product Code',
   'Product',
@@ -119,6 +162,85 @@ function money(n){return `$${(Number(n)||0).toFixed(2)}`}
 function today(){return new Date().toISOString().slice(0,10)}
 function invoiceNo(){return String(Date.now()).slice(-6)}
 function esc(v){return String(v ?? '').replace(/[&<>"]/g, s=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[s]))}
+function uniqueClean(values){
+  return [...new Set(values.map(value => String(value || '').replace(/\s+/g, ' ').trim()).filter(Boolean))];
+}
+function appSettings(){
+  try {
+    const stored = JSON.parse(localStorage.getItem(SETTINGS_STORAGE_KEY) || '{}');
+    const taxRate = Number(stored.taxRate ?? DEFAULT_SETTINGS.taxRate);
+
+    return {
+      ...DEFAULT_SETTINGS,
+      ...stored,
+      taxRate: Number.isFinite(taxRate) && taxRate >= 0 ? taxRate : DEFAULT_SETTINGS.taxRate,
+      paymentTypes: uniqueClean([...(stored.paymentTypes || DEFAULT_SETTINGS.paymentTypes), ...REQUIRED_PAYMENT_TYPES]),
+      orderStatuses: uniqueClean([...REQUIRED_STATUSES, ...(stored.orderStatuses || DEFAULT_SETTINGS.orderStatuses)]),
+      sendReceivedEmail: stored.sendReceivedEmail ?? DEFAULT_SETTINGS.sendReceivedEmail,
+      askReceivedEmail: stored.askReceivedEmail ?? DEFAULT_SETTINGS.askReceivedEmail,
+      sendCompletedEmail: stored.sendCompletedEmail ?? DEFAULT_SETTINGS.sendCompletedEmail,
+      askCompletedEmail: stored.askCompletedEmail ?? DEFAULT_SETTINGS.askCompletedEmail
+    };
+  } catch (error) {
+    console.warn('Could not read invoice settings.', error);
+    return { ...DEFAULT_SETTINGS };
+  }
+}
+function saveAppSettings(nextSettings){
+  localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify({
+    ...appSettings(),
+    ...nextSettings
+  }));
+}
+function showAppModal({
+  title = 'Message',
+  message = '',
+  confirmText = 'OK',
+  cancelText = '',
+  tone = ''
+} = {}) {
+  if (!appMessageModal) return Promise.resolve(true);
+
+  appMessageTitle.textContent = title;
+  appMessageText.textContent = message;
+  appMessageConfirmBtn.textContent = confirmText;
+  appMessageCancelBtn.textContent = cancelText || 'Cancel';
+  appMessageCancelBtn.hidden = !cancelText;
+  appMessageCard.classList.toggle('is-error', tone === 'error');
+  appMessageCard.classList.toggle('is-success', tone === 'success');
+  appMessageModal.hidden = false;
+
+  return new Promise(resolve => {
+    const close = result => {
+      appMessageModal.hidden = true;
+      appMessageConfirmBtn.removeEventListener('click', onConfirm);
+      appMessageCancelBtn.removeEventListener('click', onCancel);
+      appMessageModal.removeEventListener('click', onBackdrop);
+      document.removeEventListener('keydown', onKeydown);
+      resolve(result);
+    };
+    const onConfirm = () => close(true);
+    const onCancel = () => close(false);
+    const onBackdrop = event => {
+      if (event.target === appMessageModal) close(false);
+    };
+    const onKeydown = event => {
+      if (event.key === 'Escape') close(false);
+    };
+
+    appMessageConfirmBtn.addEventListener('click', onConfirm);
+    appMessageCancelBtn.addEventListener('click', onCancel);
+    appMessageModal.addEventListener('click', onBackdrop);
+    document.addEventListener('keydown', onKeydown);
+    setTimeout(() => appMessageConfirmBtn.focus(), 0);
+  });
+}
+function appNotice(title, message, tone = '') {
+  return showAppModal({ title, message, tone, confirmText: 'OK' });
+}
+function appConfirm(title, message, confirmText = 'Yes', cancelText = 'Cancel') {
+  return showAppModal({ title, message, confirmText, cancelText });
+}
 function normalizedText(value){return String(value || '').toLowerCase().replace(/\s+/g, ' ').trim()}
 function inventoryKey(item){return String(item?.product || item?.product_code || item?.id || '').trim()}
 function inventoryRowId(){return `local-${Date.now()}-${Math.random().toString(16).slice(2)}`}
@@ -287,6 +409,17 @@ function paymentTypeCell(row, storedNotes){
   if (!details.id && !details.provider && !details.amount) return 'Voucher';
   return `<button class="voucher-details-btn payment-voucher-btn" data-id="${esc(row.id)}" type="button">Voucher</button>`;
 }
+function statusSelectCell(row){
+  const settings = appSettings();
+  const currentStatus = row.status || 'Received';
+  const statuses = uniqueClean([...settings.orderStatuses, currentStatus]);
+
+  return `
+    <select class="status-select" data-id="${esc(row.id)}">
+      ${statuses.map(status => `<option ${status === currentStatus ? 'selected' : ''}>${esc(status)}</option>`).join('')}
+    </select>
+  `;
+}
 function showVoucherDetails(row){
   const details = voucherDetailsFromRow(row);
   voucherDetailsId.textContent = details.id || 'Not entered';
@@ -444,6 +577,102 @@ function sameCustomer(a, b){
   );
 }
 
+function customerKey(row){
+  const phone = String(row.phone || '').replace(/\D/g, '');
+  const email = String(row.email || '').toLowerCase().trim();
+  const name = String(row.parent_name || row.parentName || '').toLowerCase().trim();
+  return phone ? `phone:${phone}` : email ? `email:${email}` : `name:${name}`;
+}
+
+function customerOptionLabel(row){
+  return `${row.parent_name || 'Unknown'} - ${row.phone || row.email || row.invoice_number || 'No contact'}`;
+}
+
+function closeCustomerDropdown(){
+  if (customerDropdownMenu) customerDropdownMenu.hidden = true;
+}
+
+function resetCustomerDropdown(){
+  if (customerDropdownBtn) customerDropdownBtn.textContent = 'Select saved customer...';
+  if (customerSearch) customerSearch.value = '';
+  if (customerSelect) customerSelect.value = '';
+  closeCustomerDropdown();
+  renderReturningCustomerResults('');
+}
+
+function openCustomerDropdown(){
+  if (!customerDropdownMenu) return;
+  customerDropdownMenu.hidden = false;
+  renderReturningCustomerResults(customerSearch?.value || '');
+  setTimeout(() => customerSearch?.focus(), 0);
+}
+
+function renderReturningCustomerResults(query = ''){
+  if (!customerDropdownResults) return;
+
+  const needle = normalizedText(query);
+  const matches = returningCustomers
+    .filter(customer => !needle || normalizedText(customerOptionLabel(customer)).includes(needle))
+    .slice(0, 80);
+
+  customerDropdownResults.innerHTML = matches.length
+    ? matches.map(customer => `
+        <button class="customer-result" data-customer-id="${esc(customer.id)}" type="button">
+          <strong>${esc(customer.parent_name || 'Unknown')}</strong>
+          <span>${esc(customer.phone || customer.email || 'No contact')} / Last invoice ${esc(customer.invoice_number || 'N/A')}</span>
+        </button>
+      `).join('')
+    : '<p class="customer-result-empty">No saved customers found.</p>';
+}
+
+function clearOrderFieldsForNewCustomerOrder(){
+  itemCount = 3;
+  createRows();
+  form.invoiceNumber.value = invoiceNo();
+  form.orderDate.value = today();
+  form.pickupDate.value = '';
+  form.discount.value = '0';
+  form.discountMode.value = 'dollar';
+  form.tax.value = '0';
+  form.subtotal.value = '0';
+  form.total.value = '0';
+  form.payment.value = '0';
+  form.balance.value = '0';
+  form.paymentType.value = '';
+  form.voucherId.value = '';
+  form.voucherProvider.value = '';
+  form.voucherAmount.value = '';
+  form.status.value = 'Received';
+  form.orderTakenBy.value = '';
+  form.notes.value = '';
+}
+
+function loadCustomerInfoForNewOrder(customer){
+  const storedNotes = splitStoredNotes(customer.notes || '');
+  const parentName = splitParentName(customer, storedNotes.meta);
+
+  editingInvoiceId = null;
+  editingInvoiceArchived = false;
+  clearOrderFieldsForNewCustomerOrder();
+
+  form.school.value = customer.school || '';
+  form.parentLastName.value = parentName.lastName || '';
+  form.parentFirstName.value = parentName.firstName || '';
+  form.studentName.value = customer.student_name || customer.studentName || '';
+  form.phone.value = formatPhoneNumber(customer.phone || '');
+  form.email.value = customer.email || '';
+  form.address.value = customer.address || '';
+  form.apt.value = customer.apt || '';
+  form.city.value = customer.city || '';
+  form.zip.value = customer.zip || '';
+  form.emailList.checked = !!(customer.email_list || customer.emailList);
+
+  updateVoucherEditControl();
+  setAutosaveStatus('Returning customer info loaded. Manual save required.');
+  calculate();
+  document.querySelector('[data-view="edit"]')?.click();
+}
+
 function duplicateOrder(order){
   setForm(order);
   editingInvoiceId = null;
@@ -465,7 +694,9 @@ function renderCustomerHistory(selectedOrder, allRows = cachedAllInvoices.length
     return;
   }
 
-  const orders = allRows.filter(row => sameCustomer(row, selectedOrder));
+  const orders = allRows
+    .filter(row => sameCustomer(row, selectedOrder))
+    .sort((a, b) => String(b.order_date || b.created_at || '').localeCompare(String(a.order_date || a.created_at || '')));
   const totalSpent = orders.reduce((sum, row) => sum + (Number(row.total) || 0), 0);
   const lastPickup = orders
     .map(row => row.pickup_date)
@@ -473,12 +704,19 @@ function renderCustomerHistory(selectedOrder, allRows = cachedAllInvoices.length
     .sort()
     .pop() || 'None yet';
 
-  const recentOrders = orders.slice(0, 3).map(row => `
-    <div class="history-order">
+  const recentOrders = orders.map(row => {
+    const itemCount = Array.isArray(row.items)
+      ? row.items.filter(item => item?.amount || item?.description).length
+      : 0;
+
+    return `
+    <button class="history-order" data-history-order-id="${esc(row.id)}" type="button">
       <strong>${esc(row.invoice_number || '')} - ${money(row.total)}</strong>
       <span>${esc(row.order_date || '')} / Pickup: ${esc(row.pickup_date || 'TBD')}</span>
-    </div>
-  `).join('');
+      <span>${esc(row.status || 'Received')} / ${itemCount} item${itemCount === 1 ? '' : 's'} / Balance ${money(row.balance)}</span>
+    </button>
+  `;
+  }).join('');
 
   customerHistory.innerHTML = `
     <h3>${esc(selectedOrder.parent_name || 'Customer History')}</h3>
@@ -487,11 +725,14 @@ function renderCustomerHistory(selectedOrder, allRows = cachedAllInvoices.length
       <p><strong>Total Spent:</strong> ${money(totalSpent)}</p>
       <p><strong>Last Pickup Date:</strong> ${esc(lastPickup)}</p>
     </div>
-    <button class="duplicate-order-btn" type="button">Duplicate Last Order</button>
     ${recentOrders}
   `;
 
-  customerHistory.querySelector('.duplicate-order-btn').onclick = () => duplicateOrder(selectedOrder);
+  customerHistory.querySelectorAll('[data-history-order-id]').forEach(button => {
+    button.addEventListener('click', async () => {
+      await loadInvoiceForEdit(button.dataset.historyOrderId);
+    });
+  });
 }
 
 async function renderDashboard(){
@@ -941,7 +1182,7 @@ function renderInventoryPickerResults(index, query = ''){
         return `
           <button class="inventory-result" data-inventory-choice="${esc(inventoryKey(item))}" data-inventory-index="${esc(index)}" type="button">
             <strong>${esc(item.product)}</strong>
-            <span>${esc(parts.description)} / Color ${esc(parts.color || 'None')} / Size ${esc(parts.size || 'None')} / Stock ${esc(item.available_stock)}</span>
+            <span>${esc(parts.description)} / Color ${esc(parts.color || 'None')} / Size ${esc(parts.size || 'None')} / Price ${item.price === '' ? 'Not set' : money(item.price)} / Stock ${esc(item.available_stock)}</span>
           </button>
         `;
       }).join('')
@@ -987,7 +1228,11 @@ function selectInventoryItem(index, match){
   if (keyField) keyField.value = inventoryKey(match);
   if (form.elements[`color_${index}`]) form.elements[`color_${index}`].value = parts.color;
   if (form.elements[`size_${index}`]) form.elements[`size_${index}`].value = parts.size;
+  if (form.elements[`price_${index}`] && match.price !== '' && match.price != null) {
+    form.elements[`price_${index}`].value = Number(match.price).toFixed(2);
+  }
   updateStockWarnings();
+  calculate();
 }
 
 function lineInventoryItem(index){
@@ -1040,12 +1285,15 @@ function formData(){
 
 function invoiceRowFromForm(){
   const d = formData();
+  const discountAmount = calculateDiscountAmount(Number(d.subtotal) || 0, Number(d.discount) || 0, d.discountMode);
   const savedStockAdjustments = editingInvoiceId ? stockAdjustmentsByInvoice.get(String(editingInvoiceId)) || {} : {};
   const internalMeta = {
     parentFirstName: d.parentFirstName || '',
     parentLastName: d.parentLastName || '',
     orderTakenBy: d.orderTakenBy || '',
     paymentType: d.paymentType || '',
+    discountMode: d.discountMode || 'dollar',
+    discountValue: Number(d.discount) || 0,
     voucherId: d.voucherId || '',
     voucherProvider: d.voucherProvider || '',
     voucherAmount: d.voucherAmount || '',
@@ -1075,7 +1323,7 @@ function invoiceRowFromForm(){
     items: d.items || [],
 
     subtotal: Number(d.subtotal) || 0,
-    discount: Number(d.discount) || 0,
+    discount: discountAmount,
     tax: Number(d.tax) || 0,
     total: Number(d.total) || 0,
     payment: Number(d.payment) || 0,
@@ -1163,7 +1411,8 @@ function setForm(data){
 
   form.emailList.checked = !!(data.email_list || data.emailList);
 
-  form.discount.value = data.discount || 0;
+  form.discountMode.value = storedNotes.meta.discountMode || data.discountMode || 'dollar';
+  form.discount.value = storedNotes.meta.discountValue ?? data.discount ?? 0;
   form.payment.value = data.payment || 0;
   form.paymentType.value = storedNotes.meta.paymentType || data.payment_type || data.paymentType || '';
   form.voucherId.value = storedNotes.meta.voucherId || data.voucher_id || data.voucherId || '';
@@ -1171,7 +1420,7 @@ function setForm(data){
   form.voucherAmount.value = storedNotes.meta.voucherAmount || data.voucher_amount || data.voucherAmount || '';
 
   form.status.value = data.status || 'Received';
-  form.orderTakenBy.value = storedNotes.meta.orderTakenBy || data.order_taken_by || data.orderTakenBy || '';
+  setOrderTakenByValue(storedNotes.meta.orderTakenBy || data.order_taken_by || data.orderTakenBy || '');
   form.notes.value = storedNotes.notes || '';
 
   itemCount = Math.max(3, (data.items || []).length);
@@ -1187,6 +1436,14 @@ function setForm(data){
   calculate();
   updateVoucherEditControl();
 }
+function calculateDiscountAmount(subtotal, discountValue, mode){
+  if (mode === 'percent') {
+    const percent = Math.min(Math.max(Number(discountValue) || 0, 0), 100);
+    return subtotal * (percent / 100);
+  }
+
+  return Math.max(Number(discountValue) || 0, 0);
+}
 function calculate(){
   let subtotal=0;
   for(let i=0;i<itemCount;i++){
@@ -1196,16 +1453,78 @@ function calculate(){
     form.elements[`line_${i}`].value=line?line.toFixed(2):'';
     subtotal+=line;
   }
-  const discount=Number(form.discount.value)||0, payment=Number(form.payment.value)||0;
+  const discountValue=Number(form.discount.value)||0, payment=Number(form.payment.value)||0;
+  const discount=calculateDiscountAmount(subtotal, discountValue, form.discountMode.value);
   const taxable=Math.max(subtotal-discount,0);
-  const tax=taxable*0.0635;
+  const tax=taxable*(appSettings().taxRate / 100);
   const total=Math.max(taxable+tax,0);
   form.subtotal.value=subtotal.toFixed(2); form.tax.value=tax.toFixed(2); form.total.value=total.toFixed(2); form.balance.value=(total-payment).toFixed(2);
   updateStockWarnings();
   renderPreview();
 }
+async function functionErrorMessage(error) {
+  const fallback = error?.message || 'Unknown email service error.';
+
+  try {
+    const context = error?.context;
+    if (context?.json) {
+      const body = await context.json();
+      const resendError = body?.error;
+      if (typeof resendError === 'string') return resendError;
+      if (resendError?.message) return resendError.message;
+      if (body?.message) return body.message;
+      if (body?.error) return JSON.stringify(body.error);
+    }
+  } catch (parseError) {
+    console.warn('Could not parse email function error response.', parseError);
+  }
+
+  return fallback;
+}
+async function sendInvoiceEmail(type, invoiceOverride = null) {
+  const invoice = invoiceOverride || invoiceRowFromForm();
+
+  if (!invoice.email) {
+    await appNotice('Email Not Sent', 'No customer email found on this invoice.', 'error');
+    return false;
+  }
+
+  const invoiceHtml =
+    document.getElementById('previewPaper')?.innerHTML || '';
+
+  const { data, error } =
+    await supabaseClient.functions.invoke(
+      'send-invoice-email',
+      {
+        body: {
+          type,
+          invoice,
+          invoiceHtml
+        }
+      }
+    );
+
+  if (error) {
+    console.error('Email error:', error);
+
+    const details = await functionErrorMessage(error);
+    await appNotice('Email Failed', details, 'error');
+
+    return false;
+  }
+
+  console.log('Email sent:', data);
+
+  await appNotice('Email Sent', `Customer email sent to ${invoice.email}.`, 'success');
+  return true;
+}
+
 function renderPreview(){
   const d=formData();
+  const discountAmount = calculateDiscountAmount(Number(d.subtotal) || 0, Number(d.discount) || 0, d.discountMode);
+  const discountLabel = d.discountMode === 'percent'
+    ? `${Number(d.discount) || 0}% (${money(discountAmount)})`
+    : money(discountAmount);
   const previewItems = [...d.items];
   while (previewItems.length < 10) previewItems.push({amount:'',description:'',color:'',size:'',price:'',line:''});
   const rows=previewItems.map(x=>`<tr><td><span class="printed-entry">${esc(x.amount)}</span></td><td><span class="printed-entry">${esc(x.description)}</span></td><td><span class="printed-entry">${esc(x.color)}</span></td><td><span class="printed-entry">${esc(x.size)}</span></td><td><span class="printed-entry">${x.price?money(x.price):''}</span></td><td><span class="printed-entry">${x.line?money(x.line):''}</span></td></tr>`).join('');
@@ -1239,7 +1558,7 @@ function renderPreview(){
       <div class="thank-you"><h2>Thank You for your order</h2><p><em>If you are happy with our products and services, please let others know by giving us a review. If not, please tell us.</em></p></div>
       <div class="totals">
         <div class="total-row"><span>SUB TOTAL</span><span class="printed-entry">${money(d.subtotal)}</span></div>
-        <div class="total-row"><span>DISCOUNT</span><span class="printed-entry">${money(d.discount)}</span></div>
+        <div class="total-row"><span>DISCOUNT</span><span class="printed-entry">${esc(discountLabel)}</span></div>
         <div class="total-row"><span>TAX</span><span class="printed-entry">${money(d.tax)}</span></div>
         <div class="total-row"><span>TOTAL</span><span class="printed-entry">${money(d.total)}</span></div>
         <div class="total-row"><span>PAYMENT</span><span class="printed-entry">${money(d.payment)}</span></div>
@@ -1281,13 +1600,7 @@ async function renderDatabase(){
         <td>${esc(x.parent_name || '')}</td>
         <td>${esc(x.phone || '')}</td>
         <td>${esc(x.email || '')}</td>
-        <td>
-          <select class="status-select" data-id="${x.id}">
-            <option ${x.status === 'Received' ? 'selected' : ''}>Received</option>
-            <option ${x.status === 'In Progress' ? 'selected' : ''}>In Progress</option>
-            <option ${x.status === 'Completed' ? 'selected' : ''}>Completed</option>
-          </select>
-        </td>
+        <td>${statusSelectCell(x)}</td>
         <td>${paymentTypeCell(x, storedNotes)}</td>
         <td><span class="badge ${ageClass(days)}">${days} days</span></td>
         <td>${esc(x.pickup_date || '')}</td>
@@ -1664,12 +1977,195 @@ async function populateCustomers(){
   customerSelect.innerHTML = '<option value="">Select saved customer...</option>';
   populateSchoolSuggestions(rows);
 
-  rows.forEach((x, i) => {
+  const customers = [...rows]
+    .filter(row => row.parent_name || row.phone || row.email)
+    .sort((a, b) => String(b.order_date || b.created_at || '').localeCompare(String(a.order_date || a.created_at || '')))
+    .reduce((map, row) => {
+      const key = customerKey(row);
+      if (!map.has(key)) map.set(key, row);
+      return map;
+    }, new Map());
+
+  returningCustomers = [...customers.values()];
+
+  returningCustomers.forEach((x, i) => {
     const opt = document.createElement('option');
     opt.value = i;
-    opt.textContent = `${x.parent_name || 'Unknown'} - ${x.phone || x.email || x.invoice_number}`;
+    opt.textContent = customerOptionLabel(x);
+    opt.dataset.customerId = String(x.id || '');
     customerSelect.appendChild(opt);
   });
+
+  renderReturningCustomerResults(customerSearch?.value || '');
+}
+
+function employeeNames(){
+  try {
+    const stored = JSON.parse(localStorage.getItem(EMPLOYEES_STORAGE_KEY) || '[]');
+    const names = Array.isArray(stored) ? stored : [];
+    return [...new Set([...DEFAULT_EMPLOYEES, ...names].map(name => String(name || '').trim()).filter(Boolean))];
+  } catch (error) {
+    console.warn('Could not read employee names.', error);
+    return [...DEFAULT_EMPLOYEES];
+  }
+}
+
+function saveEmployeeNames(names){
+  const customNames = names.filter(name => !DEFAULT_EMPLOYEES.includes(name));
+  localStorage.setItem(EMPLOYEES_STORAGE_KEY, JSON.stringify(customNames));
+}
+
+function renderEmployees(){
+  const names = employeeNames();
+  const currentValue = form.orderTakenBy.value;
+
+  form.orderTakenBy.innerHTML = '<option value="">Select name...</option>';
+  names.forEach(name => {
+    const option = document.createElement('option');
+    option.value = name;
+    option.textContent = name;
+    form.orderTakenBy.appendChild(option);
+  });
+
+  if (currentValue && !names.includes(currentValue)) {
+    const option = document.createElement('option');
+    option.value = currentValue;
+    option.textContent = currentValue;
+    form.orderTakenBy.appendChild(option);
+  }
+  form.orderTakenBy.value = currentValue || '';
+
+  if (!employeeList) return;
+  employeeList.innerHTML = names.map(name => `
+    <div class="employee-row">
+      <span>${esc(name)}</span>
+      <button class="ghost employee-remove-btn" data-employee-name="${esc(name)}" type="button"${DEFAULT_EMPLOYEES.includes(name) ? ' disabled' : ''}>Remove</button>
+    </div>
+  `).join('');
+}
+
+function setOrderTakenByValue(value){
+  const name = String(value || '').trim();
+  if (name && ![...form.orderTakenBy.options].some(option => option.value === name)) {
+    const option = document.createElement('option');
+    option.value = name;
+    option.textContent = name;
+    form.orderTakenBy.appendChild(option);
+  }
+  form.orderTakenBy.value = name;
+}
+
+function setSelectOptions(select, options, placeholder, currentValue = ''){
+  if (!select) return;
+  const value = String(currentValue || select.value || '');
+  select.innerHTML = `<option value="">${placeholder}</option>`;
+  options.forEach(optionValue => {
+    const option = document.createElement('option');
+    option.value = optionValue;
+    option.textContent = optionValue;
+    select.appendChild(option);
+  });
+  if (value && !options.includes(value)) {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = value;
+    select.appendChild(option);
+  }
+  select.value = value;
+}
+
+function renderPaymentTypes(){
+  const settings = appSettings();
+  setSelectOptions(form.paymentType, settings.paymentTypes, 'Select payment type...');
+
+  if (!paymentTypeList) return;
+  paymentTypeList.innerHTML = settings.paymentTypes.map(type => `
+    <div class="settings-row">
+      <span>${esc(type)}</span>
+      <button class="ghost setting-remove-btn" data-setting-kind="payment" data-setting-value="${esc(type)}" type="button"${REQUIRED_PAYMENT_TYPES.includes(type) ? ' disabled' : ''}>Remove</button>
+    </div>
+  `).join('');
+}
+
+function renderOrderStatuses(){
+  const settings = appSettings();
+  setSelectOptions(form.status, settings.orderStatuses, 'Select status...');
+
+  if (!orderStatusList) return;
+  orderStatusList.innerHTML = settings.orderStatuses.map(status => `
+    <div class="settings-row">
+      <span>${esc(status)}</span>
+      <button class="ghost setting-remove-btn" data-setting-kind="status" data-setting-value="${esc(status)}" type="button"${REQUIRED_STATUSES.includes(status) ? ' disabled' : ''}>Remove</button>
+    </div>
+  `).join('');
+}
+
+function renderEmailSettings(){
+  const settings = appSettings();
+  if (sendReceivedEmailSetting) sendReceivedEmailSetting.checked = Boolean(settings.sendReceivedEmail);
+  if (askReceivedEmailSetting) askReceivedEmailSetting.checked = Boolean(settings.askReceivedEmail);
+  if (sendCompletedEmailSetting) sendCompletedEmailSetting.checked = Boolean(settings.sendCompletedEmail);
+  if (askCompletedEmailSetting) askCompletedEmailSetting.checked = Boolean(settings.askCompletedEmail);
+}
+
+function renderTaxSettings(){
+  const settings = appSettings();
+  if (taxRateInput) taxRateInput.value = settings.taxRate;
+  if (taxRateLabel) taxRateLabel.textContent = `CT Tax ${settings.taxRate}%`;
+}
+
+function renderInvoiceSettings(){
+  renderTaxSettings();
+  renderPaymentTypes();
+  renderOrderStatuses();
+  renderEmailSettings();
+  calculate();
+}
+
+function addListSetting(event, key, input){
+  event.preventDefault();
+  const value = input.value.replace(/\s+/g, ' ').trim();
+  if (!value) return;
+
+  const settings = appSettings();
+  const values = uniqueClean([...(settings[key] || []), value]);
+  saveAppSettings({ [key]: values });
+  input.value = '';
+  renderInvoiceSettings();
+}
+
+function removeListSetting(kind, value){
+  const settings = appSettings();
+  const key = kind === 'payment' ? 'paymentTypes' : 'orderStatuses';
+  const required = kind === 'payment' ? REQUIRED_PAYMENT_TYPES : REQUIRED_STATUSES;
+  if (required.includes(value)) return;
+
+  saveAppSettings({
+    [key]: (settings[key] || []).filter(item => item !== value)
+  });
+  renderInvoiceSettings();
+}
+
+function addEmployee(event){
+  event.preventDefault();
+  const name = employeeNameInput.value.replace(/\s+/g, ' ').trim();
+  if (!name) return;
+
+  const names = employeeNames();
+  if (!names.some(existing => existing.toLowerCase() === name.toLowerCase())) {
+    names.push(name);
+    saveEmployeeNames(names);
+  }
+
+  employeeNameInput.value = '';
+  renderEmployees();
+}
+
+function removeEmployee(name){
+  const names = employeeNames().filter(existing => existing !== name);
+  saveEmployeeNames(names);
+  if (form.orderTakenBy.value === name) form.orderTakenBy.value = '';
+  renderEmployees();
 }
 function validateInvoice(){
   form.phone.value = formatPhoneNumber(form.phone.value);
@@ -1829,8 +2325,22 @@ async function submitInvoice(){
   await renderArchivedDatabase();
   await renderDashboard();
   await renderReports();
+  
+  const settings = appSettings();
+  let shouldEmail = Boolean(settings.sendReceivedEmail);
 
-  alert('Invoice saved successfully.');
+  if (shouldEmail && settings.askReceivedEmail) {
+    shouldEmail = await appConfirm(
+      'Invoice Saved',
+      'Send confirmation email to the customer?',
+      'Send Email',
+      'Not Now'
+    );
+  }
+
+  if (shouldEmail) {
+    await sendInvoiceEmail('order_received');
+  }
 }
 function newInvoice(){
   form.reset();
@@ -1844,14 +2354,17 @@ function newInvoice(){
   form.discount.value = '0';
   form.tax.value = '0';
   form.payment.value = '0';
+  form.discountMode.value = 'dollar';
   form.paymentType.value = '';
   form.voucherId.value = '';
   form.voucherProvider.value = '';
   form.voucherAmount.value = '';
   stockAdjustmentsByInvoice.delete('');
+  resetCustomerDropdown();
   renderCustomerHistory(null);
   setAutosaveStatus('Manual save required for new invoices.');
   calculate();
+  renderTaxSettings();
   updateVoucherEditControl();
   document.querySelector('[data-view="edit"]')?.click();
 }
@@ -1971,7 +2484,6 @@ document.getElementById('printBtn').onclick=()=>{renderPreview();document.queryS
 document.getElementById('printTopBtn').onclick=()=>{renderPreview();document.querySelector('[data-view="preview"]').click();setTimeout(()=>window.print(),60)};
 document.getElementById('newInvoiceBtn').onclick=newInvoice;
 document.getElementById('addLineBtn').onclick=()=>{const current=formData().items; itemCount++; createRows(current); calculate();};
-document.getElementById('emailBtn').onclick=()=>{const d=formData(); const subject=encodeURIComponent(`Living Word Imprints Order ${d.invoiceNumber}`); const body=encodeURIComponent(`Hi ${d.parentName||''},\n\nYour order has been received. Pickup date: ${d.pickupDate||'TBD'}.\n\nThank you,\nLiving Word Imprints`); if(d.email) location.href=`mailto:${d.email}?subject=${subject}&body=${body}`; else alert('Add customer email first.');};
 document.getElementById('voucherCancelBtn').onclick = () => closeVoucherModal();
 document.getElementById('voucherSaveBtn').onclick = () => saveVoucherModal();
 editVoucherBtn.onclick = () => openVoucherModal();
@@ -1982,29 +2494,57 @@ document.getElementById('voucherDetailsCloseBtn').onclick = () => closeVoucherDe
 voucherDetailsModal.addEventListener('click', e => {
   if (e.target === voucherDetailsModal) closeVoucherDetails();
 });
-customerSelect.onchange = async () => {
+async function loadReturningCustomerById(id) {
   const rows = await getAllInvoices();
+  const selected = rows.find(row => String(row.id) === String(id));
 
-  if (customerSelect.value !== '') {
-    const selected = rows[customerSelect.value];
-
-    // Returning customer shortcut: copy their last order into a NEW invoice.
-    // The Edit button in the database is still used when Hermin wants to edit an old saved invoice.
-    setForm(selected);
-    editingInvoiceId = null;
-    editingInvoiceArchived = false;
-    form.invoiceNumber.value = invoiceNo();
-    form.orderDate.value = today();
-    form.pickupDate.value = '';
-    form.status.value = 'Received';
-    setAutosaveStatus('Returning customer loaded as a new invoice. Manual save required.');
-    calculate();
-
+  if (selected) {
+    if (customerDropdownBtn) customerDropdownBtn.textContent = customerOptionLabel(selected);
+    if (customerSearch) customerSearch.value = '';
+    closeCustomerDropdown();
+    loadCustomerInfoForNewOrder(selected);
     renderCustomerHistory(selected, rows);
   } else {
     renderCustomerHistory(null, rows);
   }
+}
+
+customerSelect.onchange = async () => {
+  const option = customerSelect.selectedOptions[0];
+  if (option?.dataset.customerId) {
+    await loadReturningCustomerById(option.dataset.customerId);
+  } else {
+    renderCustomerHistory(null);
+  }
 };
+if (customerSearch) {
+  customerSearch.addEventListener('input', () => {
+    renderReturningCustomerResults(customerSearch.value);
+  });
+}
+if (customerSearchBtn) {
+  customerSearchBtn.addEventListener('click', () => {
+    renderReturningCustomerResults(customerSearch?.value || '');
+  });
+}
+if (customerDropdownBtn) {
+  customerDropdownBtn.addEventListener('click', () => {
+    if (customerDropdownMenu?.hidden) openCustomerDropdown();
+    else closeCustomerDropdown();
+  });
+}
+if (customerDropdownResults) {
+  customerDropdownResults.addEventListener('click', async event => {
+    const button = event.target.closest('[data-customer-id]');
+    if (!button) return;
+    await loadReturningCustomerById(button.dataset.customerId);
+  });
+}
+document.addEventListener('click', event => {
+  if (customerDropdown && !customerDropdown.contains(event.target)) {
+    closeCustomerDropdown();
+  }
+});
 searchInput.addEventListener('input', renderDatabase);
 if (archivedSearchInput) archivedSearchInput.addEventListener('input', renderArchivedDatabase);
 if (inventorySearchInput) inventorySearchInput.addEventListener('input', renderInventory);
@@ -2091,15 +2631,14 @@ if (inventoryBody) {
   });
 }
 databaseBody.addEventListener('change', async e => {
-
   if (e.target.classList.contains('status-select')) {
-
     const id = e.target.dataset.id;
+    const newStatus = e.target.value;
 
     const { error } = await supabaseClient
       .from('invoices')
       .update({
-        status: e.target.value
+        status: newStatus
       })
       .eq('id', id);
 
@@ -2107,6 +2646,30 @@ databaseBody.addEventListener('change', async e => {
       console.error(error);
       alert('Failed to update status');
       return;
+    }
+
+    const invoice =
+      cachedAllInvoices.find(row => String(row.id) === String(id)) ||
+      cachedInvoices.find(row => String(row.id) === String(id));
+
+    if (newStatus === 'Completed' && invoice) {
+      invoice.status = newStatus;
+
+      const settings = appSettings();
+      let shouldNotify = Boolean(settings.sendCompletedEmail);
+
+      if (shouldNotify && settings.askCompletedEmail) {
+        shouldNotify = await appConfirm(
+          'Order Completed',
+          'Notify the customer that this order is complete?',
+          'Notify Customer',
+          'Not Now'
+        );
+      }
+
+      if (shouldNotify) {
+        await sendInvoiceEmail('order_completed', invoice);
+      }
     }
 
     await renderDatabase();
@@ -2319,6 +2882,8 @@ if (archivedBody) {
 
 async function init(){
   createRows();
+  renderInvoiceSettings();
+  renderEmployees();
   newInvoice();
   await loadInventory();
   await normalizeStoredPhoneNumbers();
@@ -2339,6 +2904,54 @@ async function handleAuthSession(session){
 
 if (adminLoginForm) adminLoginForm.addEventListener('submit', submitAdminLogin);
 if (logoutBtn) logoutBtn.addEventListener('click', signOutAdmin);
+if (employeeForm) employeeForm.addEventListener('submit', addEmployee);
+if (taxSettingsForm) {
+  taxSettingsForm.addEventListener('submit', event => {
+    event.preventDefault();
+    const taxRate = Number(taxRateInput.value);
+    saveAppSettings({ taxRate: Number.isFinite(taxRate) && taxRate >= 0 ? taxRate : DEFAULT_SETTINGS.taxRate });
+    renderInvoiceSettings();
+  });
+}
+[
+  [sendReceivedEmailSetting, 'sendReceivedEmail'],
+  [askReceivedEmailSetting, 'askReceivedEmail'],
+  [sendCompletedEmailSetting, 'sendCompletedEmail'],
+  [askCompletedEmailSetting, 'askCompletedEmail']
+].forEach(([input, key]) => {
+  if (!input) return;
+  input.addEventListener('change', () => {
+    saveAppSettings({ [key]: input.checked });
+    renderEmailSettings();
+  });
+});
+if (paymentTypeForm) {
+  paymentTypeForm.addEventListener('submit', event => addListSetting(event, 'paymentTypes', paymentTypeInput));
+}
+if (orderStatusForm) {
+  orderStatusForm.addEventListener('submit', event => addListSetting(event, 'orderStatuses', orderStatusInput));
+}
+if (paymentTypeList) {
+  paymentTypeList.addEventListener('click', event => {
+    const button = event.target.closest('.setting-remove-btn');
+    if (!button || button.disabled) return;
+    removeListSetting(button.dataset.settingKind, button.dataset.settingValue);
+  });
+}
+if (orderStatusList) {
+  orderStatusList.addEventListener('click', event => {
+    const button = event.target.closest('.setting-remove-btn');
+    if (!button || button.disabled) return;
+    removeListSetting(button.dataset.settingKind, button.dataset.settingValue);
+  });
+}
+if (employeeList) {
+  employeeList.addEventListener('click', event => {
+    const button = event.target.closest('.employee-remove-btn');
+    if (!button || button.disabled) return;
+    removeEmployee(button.dataset.employeeName);
+  });
+}
 
 supabaseClient.auth.onAuthStateChange((event, session) => {
   setTimeout(() => {
