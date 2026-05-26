@@ -10,6 +10,7 @@ const adminLoginError = document.getElementById('adminLoginError');
 const logoutBtn = document.getElementById('logoutBtn');
 const itemsEditor = document.getElementById('itemsEditor');
 const previewPaper = document.getElementById('previewPaper');
+const editOnlyControls = document.getElementById('editOnlyControls');
 const databaseBody = document.getElementById('databaseBody');
 const customerSelect = document.getElementById('customerSelect');
 const customerDropdown = document.getElementById('customerDropdown');
@@ -63,6 +64,19 @@ const inventoryDeleteModal = document.getElementById('inventoryDeleteModal');
 const inventoryDeleteMessage = document.getElementById('inventoryDeleteMessage');
 const inventoryDeleteCancelBtn = document.getElementById('inventoryDeleteCancelBtn');
 const inventoryDeleteConfirmBtn = document.getElementById('inventoryDeleteConfirmBtn');
+const exportInventoryCsvBtn = document.getElementById('exportInventoryCsvBtn');
+const uploadInventoryCsvBtn = document.getElementById('uploadInventoryCsvBtn');
+const inventoryCsvModal = document.getElementById('inventoryCsvModal');
+const inventoryCsvForm = document.getElementById('inventoryCsvForm');
+const inventoryCsvFile = document.getElementById('inventoryCsvFile');
+const inventoryCsvMode = document.getElementById('inventoryCsvMode');
+const inventoryCsvStatus = document.getElementById('inventoryCsvStatus');
+const inventoryCsvCancelBtn = document.getElementById('inventoryCsvCancelBtn');
+const invoiceDeleteModal = document.getElementById('invoiceDeleteModal');
+const invoiceDeleteMessage = document.getElementById('invoiceDeleteMessage');
+const invoiceDeleteRestoreInventory = document.getElementById('invoiceDeleteRestoreInventory');
+const invoiceDeleteCancelBtn = document.getElementById('invoiceDeleteCancelBtn');
+const invoiceDeleteConfirmBtn = document.getElementById('invoiceDeleteConfirmBtn');
 const reportDateFilter = document.getElementById('reportDateFilter');
 const reportSchoolSelect = document.getElementById('reportSchoolSelect');
 const reportLimitSelect = document.getElementById('reportLimitSelect');
@@ -125,6 +139,7 @@ let selectedInventoryIds = new Set();
 let stockAdjustmentsByInvoice = new Map();
 let appInitialized = false;
 let returningCustomers = [];
+let pendingInvoiceDeleteId = null;
 let reportDateRange = 'thisYear';
 let reportSchoolFilter = '';
 let reportChartLimit = '20';
@@ -323,6 +338,11 @@ function parseCsv(text){
 function csvRowsToInventory(csvText){
   const rows = parseCsv(csvText);
   const headers = rows.shift() || [];
+  const missingHeaders = INVENTORY_COLUMNS.filter(header => !headers.includes(header));
+  if (missingHeaders.length) {
+    throw new Error(`Missing required columns: ${missingHeaders.join(', ')}`);
+  }
+
   return rows.map(row => {
     const source = Object.fromEntries(headers.map((header, index) => [header, row[index] || '']));
     return normalizeInventoryItem({
@@ -336,6 +356,27 @@ function csvRowsToInventory(csvText){
       report_color: source['Report Color']
     });
   }).filter(item => item.product);
+}
+function csvEscape(value){
+  const text = String(value ?? '');
+  return /[",\n\r]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+}
+function inventoryToCsv(items){
+  const rows = [
+    INVENTORY_COLUMNS,
+    ...items.map(item => [
+      item.product_code,
+      item.product,
+      item.price,
+      item.status,
+      item.minimum_stock,
+      item.available_stock,
+      item.supplier,
+      item.report_color
+    ])
+  ];
+
+  return rows.map(row => row.map(csvEscape).join(',')).join('\n');
 }
 function sizeTokenIndex(parts){
   const sizeTokens = new Set(['YXS','YS','YM','YL','YXL','XS','S','M','L','XL','XXL','2XL','3XL','4XL','5XL','6XL','SM','MD','MED','LG']);
@@ -1342,10 +1383,16 @@ function invoiceRowFromForm(){
 function setAutosaveStatus(message, state = ''){
   if (!autosaveStatus) return;
 
-  autosaveStatus.textContent = message;
+  autosaveStatus.textContent = message.toUpperCase();
   autosaveStatus.className = 'autosave-status';
 
   if (state) autosaveStatus.classList.add(state);
+  updateAutosaveVisibility();
+}
+function updateAutosaveVisibility(){
+  const editActive = document.getElementById('editView')?.classList.contains('active');
+  if (autosaveStatus) autosaveStatus.hidden = !editActive;
+  if (editOnlyControls) editOnlyControls.hidden = !editActive;
 }
 
 function queueAutosave(){
@@ -1615,6 +1662,11 @@ async function renderDatabase(){
             Archive
           </button>
         </td>
+        <td>
+          <button class="delete-invoice-btn" data-id="${x.id}">
+            Delete
+          </button>
+        </td>
       `;
 
       databaseBody.appendChild(tr);
@@ -1653,6 +1705,11 @@ async function renderArchivedDatabase(){
         <td>
           <button class="restore-invoice-btn" data-id="${x.id}">
             Restore
+          </button>
+        </td>
+        <td>
+          <button class="delete-invoice-btn" data-id="${x.id}">
+            Delete
           </button>
         </td>
       `;
@@ -1737,6 +1794,128 @@ async function saveInventorySeedToSupabase(){
     .upsert(rows, { onConflict: 'product' });
 
   if (error) throw error;
+}
+
+async function syncInventoryToSupabase(items, mode = 'merge'){
+  if (!inventoryBackendAvailable) return true;
+
+  const rows = items.map(item => ({
+    product_code: item.product_code,
+    product: item.product,
+    price: item.price === '' ? null : Number(item.price),
+    status: item.status,
+    minimum_stock: Number(item.minimum_stock) || 0,
+    available_stock: Number(item.available_stock) || 0,
+    supplier: item.supplier,
+    report_color: item.report_color
+  }));
+
+  if (mode === 'replace') {
+    const { error: deleteError } = await supabaseClient
+      .from('inventory')
+      .delete()
+      .not('product', 'is', null);
+
+    if (deleteError) throw deleteError;
+  }
+
+  if (!rows.length) return true;
+
+  const { error } = await supabaseClient
+    .from('inventory')
+    .upsert(rows, { onConflict: 'product' });
+
+  if (error) throw error;
+  return true;
+}
+
+function downloadInventoryCsv(){
+  const csv = inventoryToCsv(inventoryItems);
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `living-word-inventory-${today()}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function openInventoryCsvModal(){
+  if (!inventoryCsvModal || !inventoryCsvForm) return;
+  inventoryCsvForm.reset();
+  if (inventoryCsvStatus) {
+    inventoryCsvStatus.textContent = 'Choose a CSV file to upload.';
+    inventoryCsvStatus.className = 'autosave-status';
+  }
+  inventoryCsvModal.hidden = false;
+  setTimeout(() => inventoryCsvFile?.focus(), 0);
+}
+
+function closeInventoryCsvModal(){
+  if (inventoryCsvModal) inventoryCsvModal.hidden = true;
+}
+
+async function importInventoryCsv(event){
+  event.preventDefault();
+  const file = inventoryCsvFile?.files?.[0];
+  if (!file) return;
+
+  try {
+    if (inventoryCsvStatus) {
+      inventoryCsvStatus.textContent = 'Reading CSV...';
+      inventoryCsvStatus.className = 'autosave-status saving';
+    }
+
+    const importedItems = csvRowsToInventory(await file.text());
+    if (!importedItems.length) {
+      throw new Error('No inventory rows found in this CSV.');
+    }
+
+    const mode = inventoryCsvMode?.value || 'merge';
+
+    if (mode === 'replace') {
+      inventoryItems = importedItems;
+      selectedInventoryIds.clear();
+      localStorage.removeItem(INVENTORY_DELETED_KEY);
+    } else {
+      const byProduct = new Map(inventoryItems.map(item => [normalizedText(item.product), item]));
+      importedItems.forEach(item => {
+        const key = normalizedText(item.product);
+        const existing = byProduct.get(key);
+        if (existing) {
+          Object.assign(existing, {
+            product_code: item.product_code,
+            product: item.product,
+            price: item.price,
+            status: item.status,
+            minimum_stock: item.minimum_stock,
+            available_stock: item.available_stock,
+            supplier: item.supplier,
+            report_color: item.report_color
+          });
+        } else {
+          inventoryItems.push(item);
+        }
+        forgetDeletedInventory(item.product);
+      });
+    }
+
+    localStorage.setItem(INVENTORY_STORAGE_KEY, JSON.stringify(inventoryItems));
+    await syncInventoryToSupabase(mode === 'replace' ? inventoryItems : importedItems, mode);
+    renderInventory();
+    refreshInventoryDatalists();
+    updateStockWarnings();
+    setInventoryStatus(`Imported ${importedItems.length} inventory item${importedItems.length === 1 ? '' : 's'}.`, 'saved');
+    closeInventoryCsvModal();
+  } catch (error) {
+    console.error(error);
+    if (inventoryCsvStatus) {
+      inventoryCsvStatus.textContent = error instanceof Error ? error.message : 'CSV import failed.';
+      inventoryCsvStatus.className = 'autosave-status error';
+    }
+  }
 }
 
 function inventoryNeedsReorder(item){
@@ -2369,7 +2548,7 @@ function newInvoice(){
   document.querySelector('[data-view="edit"]')?.click();
 }
 
-document.querySelectorAll('.tab').forEach(btn=>btn.addEventListener('click',()=>{document.querySelectorAll('.tab,.view').forEach(x=>x.classList.remove('active'));btn.classList.add('active');document.getElementById(btn.dataset.view+'View').classList.add('active');renderPreview();renderDatabase();renderArchivedDatabase();renderDashboard();renderReports();renderInventory();}));
+document.querySelectorAll('.tab').forEach(btn=>btn.addEventListener('click',()=>{document.querySelectorAll('.tab,.view').forEach(x=>x.classList.remove('active'));btn.classList.add('active');document.getElementById(btn.dataset.view+'View').classList.add('active');updateAutosaveVisibility();renderPreview();renderDatabase();renderArchivedDatabase();renderDashboard();renderReports();renderInventory();}));
 document.querySelectorAll('.filter-card').forEach(card => {
   card.addEventListener('click', () => {
     dashboardFilter = card.dataset.dashboardFilter;
@@ -2494,6 +2673,13 @@ document.getElementById('voucherDetailsCloseBtn').onclick = () => closeVoucherDe
 voucherDetailsModal.addEventListener('click', e => {
   if (e.target === voucherDetailsModal) closeVoucherDetails();
 });
+if (invoiceDeleteCancelBtn) invoiceDeleteCancelBtn.addEventListener('click', closeInvoiceDeleteModal);
+if (invoiceDeleteConfirmBtn) invoiceDeleteConfirmBtn.addEventListener('click', deleteSavedInvoice);
+if (invoiceDeleteModal) {
+  invoiceDeleteModal.addEventListener('click', e => {
+    if (e.target === invoiceDeleteModal) closeInvoiceDeleteModal();
+  });
+}
 async function loadReturningCustomerById(id) {
   const rows = await getAllInvoices();
   const selected = rows.find(row => String(row.id) === String(id));
@@ -2564,9 +2750,18 @@ if (addInventoryRowBtn) addInventoryRowBtn.addEventListener('click', openInvento
 if (deleteInventoryBtn) deleteInventoryBtn.addEventListener('click', openInventoryDeleteModal);
 if (inventoryDeleteConfirmBtn) inventoryDeleteConfirmBtn.addEventListener('click', deleteSelectedInventory);
 if (inventoryDeleteCancelBtn) inventoryDeleteCancelBtn.addEventListener('click', closeInventoryDeleteModal);
+if (exportInventoryCsvBtn) exportInventoryCsvBtn.addEventListener('click', downloadInventoryCsv);
+if (uploadInventoryCsvBtn) uploadInventoryCsvBtn.addEventListener('click', openInventoryCsvModal);
+if (inventoryCsvForm) inventoryCsvForm.addEventListener('submit', importInventoryCsv);
+if (inventoryCsvCancelBtn) inventoryCsvCancelBtn.addEventListener('click', closeInventoryCsvModal);
 if (inventoryDeleteModal) {
   inventoryDeleteModal.addEventListener('click', e => {
     if (e.target === inventoryDeleteModal) closeInventoryDeleteModal();
+  });
+}
+if (inventoryCsvModal) {
+  inventoryCsvModal.addEventListener('click', e => {
+    if (e.target === inventoryCsvModal) closeInventoryCsvModal();
   });
 }
 if (inventorySelectAll) {
@@ -2752,6 +2947,101 @@ async function setArchivedStatus(id, archived){
   }
 }
 
+function openInvoiceDeleteModal(id){
+  const invoice = cachedAllInvoices.find(row => String(row.id) === String(id)) || {};
+  pendingInvoiceDeleteId = id;
+
+  if (invoiceDeleteMessage) {
+    invoiceDeleteMessage.textContent = `Invoice ${invoice.invoice_number || ''} for ${invoice.parent_name || 'this customer'} will be permanently deleted.`;
+  }
+  if (invoiceDeleteRestoreInventory) invoiceDeleteRestoreInventory.checked = false;
+
+  if (invoiceDeleteModal) invoiceDeleteModal.hidden = false;
+}
+
+function closeInvoiceDeleteModal(){
+  pendingInvoiceDeleteId = null;
+  if (invoiceDeleteModal) invoiceDeleteModal.hidden = true;
+}
+
+async function restoreInventoryForDeletedInvoice(invoice){
+  const storedNotes = splitStoredNotes(invoice.notes || '');
+  const adjustments = storedNotes.meta[STOCK_META_KEY] || {};
+  const keys = Object.keys(adjustments);
+  if (!keys.length) return true;
+
+  let restored = true;
+
+  for (const key of keys) {
+    const amount = Number(adjustments[key]) || 0;
+    if (!amount) continue;
+
+    const item = inventoryItems.find(row => String(inventoryKey(row)) === String(key));
+    if (!item) continue;
+
+    item.available_stock = (Number(item.available_stock) || 0) + amount;
+    const saved = await saveInventoryItemImmediate(item);
+    if (!saved) restored = false;
+  }
+
+  localStorage.setItem(INVENTORY_STORAGE_KEY, JSON.stringify(inventoryItems));
+  renderInventory();
+  refreshInventoryDatalists();
+  updateStockWarnings();
+  return restored;
+}
+
+async function deleteSavedInvoice(){
+  if (!pendingInvoiceDeleteId) return;
+
+  const id = pendingInvoiceDeleteId;
+  const invoice = cachedAllInvoices.find(row => String(row.id) === String(id));
+  closeInvoiceDeleteModal();
+
+  if (!invoice) {
+    await appNotice('Delete Failed', 'Could not find this saved order.', 'error');
+    return;
+  }
+
+  const shouldRestoreInventory = Boolean(invoiceDeleteRestoreInventory?.checked);
+  const inventoryRestored = shouldRestoreInventory
+    ? await restoreInventoryForDeletedInvoice(invoice)
+    : true;
+
+  const { error } = await supabaseClient
+    .from('invoices')
+    .delete()
+    .eq('id', id);
+
+  if (error) {
+    console.error(error);
+    await appNotice('Delete Failed', 'Supabase could not delete this saved order. Check delete permissions for the invoices table.', 'error');
+    return;
+  }
+
+  cachedAllInvoices = cachedAllInvoices.filter(row => String(row.id) !== String(id));
+  cachedInvoices = cachedInvoices.filter(row => String(row.id) !== String(id));
+  stockAdjustmentsByInvoice.delete(String(id));
+
+  if (String(editingInvoiceId) === String(id)) {
+    newInvoice();
+  }
+
+  await populateCustomers();
+  await renderDatabase();
+  await renderArchivedDatabase();
+  await renderDashboard();
+  await renderReports();
+
+  if (shouldRestoreInventory && !inventoryRestored) {
+    await appNotice('Order Deleted', 'The order was deleted, but inventory stock was not fully restored. Please check Inventory.', 'error');
+  } else if (shouldRestoreInventory) {
+    await appNotice('Order Deleted', 'Saved order deleted and inventory stock restored.', 'success');
+  } else {
+    await appNotice('Order Deleted', 'Saved order deleted. Inventory was left unchanged.', 'success');
+  }
+}
+
 function openVoucherModal(){
   voucherIdInput.value = form.voucherId.value || '';
   voucherProviderInput.value = form.voucherProvider.value || '';
@@ -2857,6 +3147,11 @@ databaseBody.addEventListener('click', async e => {
 
   if (e.target.classList.contains('archive-invoice-btn')) {
     await setArchivedStatus(e.target.dataset.id, true);
+    return;
+  }
+
+  if (e.target.classList.contains('delete-invoice-btn')) {
+    openInvoiceDeleteModal(e.target.dataset.id);
   }
 });
 
@@ -2875,6 +3170,11 @@ if (archivedBody) {
 
     if (e.target.classList.contains('restore-invoice-btn')) {
       await setArchivedStatus(e.target.dataset.id, false);
+      return;
+    }
+
+    if (e.target.classList.contains('delete-invoice-btn')) {
+      openInvoiceDeleteModal(e.target.dataset.id);
     }
   });
 }

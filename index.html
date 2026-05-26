@@ -36,9 +36,8 @@
   </header>
 
   <main class="wrap app-shell" id="appShell" hidden>
-    <aside class="panel no-print">
-      <h2>Invoice Controls</h2>
-      <div class="tabs">
+    <div class="admin-topbar no-print">
+      <nav class="tabs" aria-label="Invoice controls">
         <button class="tab active" data-view="dashboard" type="button">Dashboard</button>
         <button class="tab" data-view="edit" type="button">Edit</button>
         <button class="tab" data-view="preview" type="button">Preview</button>
@@ -47,34 +46,40 @@
         <button class="tab" data-view="database" type="button">Database</button>
         <button class="tab" data-view="archived" type="button">Archived</button>
         <button class="tab" data-view="settings" type="button">Settings</button>
-      </div>
+      </nav>
 
-      <label class="field-label">Returning Customer</label>
-      <div class="customer-dropdown" id="customerDropdown">
-        <button class="customer-dropdown-toggle" id="customerDropdownBtn" type="button">Select saved customer...</button>
-        <div class="customer-dropdown-menu" id="customerDropdownMenu" hidden>
-          <div class="customer-search-row">
-            <input id="customerSearch" placeholder="Search customers..." autocomplete="off">
-            <button class="ghost" id="customerSearchBtn" type="button">Search</button>
+      <div class="edit-only-controls" id="editOnlyControls" hidden>
+        <div class="invoice-toolbar">
+          <div class="returning-customer-control">
+            <label class="field-label">Returning Customer</label>
+            <div class="customer-dropdown" id="customerDropdown">
+              <button class="customer-dropdown-toggle" id="customerDropdownBtn" type="button">Select saved customer...</button>
+              <div class="customer-dropdown-menu" id="customerDropdownMenu" hidden>
+                <div class="customer-search-row">
+                  <input id="customerSearch" placeholder="Search customers..." autocomplete="off">
+                  <button class="ghost" id="customerSearchBtn" type="button">Search</button>
+                </div>
+                <div class="customer-dropdown-results" id="customerDropdownResults"></div>
+              </div>
+            </div>
+            <select id="customerSelect" hidden>
+              <option value="">Select saved customer...</option>
+            </select>
           </div>
-          <div class="customer-dropdown-results" id="customerDropdownResults"></div>
+
+          <div class="quick-actions">
+            <button class="primary" id="submitBtn" type="button">Submit / Save</button>
+            <button class="ghost" id="printBtn" type="button">Print / PDF</button>
+          </div>
+
+          <div id="autosaveStatus" class="autosave-status caution" hidden>MANUAL SAVE REQUIRED FOR NEW INVOICES.</div>
+        </div>
+
+        <div id="customerHistory" class="customer-history">
+          <p class="history-empty">Select a returning customer to view order history.</p>
         </div>
       </div>
-      <select id="customerSelect" hidden>
-        <option value="">Select saved customer...</option>
-      </select>
-
-      <div id="customerHistory" class="customer-history">
-        <p class="history-empty">Select a returning customer to view order history.</p>
-      </div>
-
-      <div class="quick-actions">
-        <button class="primary" id="submitBtn" type="button">Submit / Save</button>
-        <button class="ghost" id="printBtn" type="button">Print / PDF</button>
-      </div>
-
-      <div id="autosaveStatus" class="autosave-status">Manual save required for new invoices.</div>
-    </aside>
+    </div>
 
     <section class="workspace">
       <section id="dashboardView" class="view active no-print">
@@ -290,7 +295,7 @@
         </div>
         <div class="table-wrap">
           <table class="db-table">
-            <thead><tr><th>Invoice</th><th>Parent</th><th>Phone</th><th>Email</th><th>Status</th><th>Payment Type</th><th>Days</th><th>Pickup</th><th>Notes</th><th>Edit</th><th>Archive</th></tr></thead>
+            <thead><tr><th>Invoice</th><th>Parent</th><th>Phone</th><th>Email</th><th>Status</th><th>Payment Type</th><th>Days</th><th>Pickup</th><th>Notes</th><th>Edit</th><th>Archive</th><th>Delete</th></tr></thead>
             <tbody id="databaseBody"></tbody>
           </table>
         </div>
@@ -304,6 +309,8 @@
         <div class="inventory-toolbar">
           <button class="ghost inventory-filter-toggle" id="inventoryReorderFilterBtn" type="button">Needs Reorder <strong id="inventoryReorderCount">0</strong></button>
           <button class="ghost" id="addInventoryRowBtn" type="button">+ Add Inventory Item</button>
+          <button class="ghost" id="exportInventoryCsvBtn" type="button">Export CSV</button>
+          <button class="ghost" id="uploadInventoryCsvBtn" type="button">Upload CSV</button>
           <button class="ghost inventory-delete-btn" id="deleteInventoryBtn" type="button" disabled>Delete Selected <span id="inventorySelectedCount">0</span></button>
           <span class="autosave-status" id="inventorySaveStatus">Inventory loading...</span>
         </div>
@@ -334,7 +341,7 @@
         </div>
         <div class="table-wrap">
           <table class="db-table">
-            <thead><tr><th>Invoice</th><th>Parent</th><th>Phone</th><th>Email</th><th>Status</th><th>Payment Type</th><th>Days</th><th>Pickup</th><th>Notes</th><th>Edit</th><th>Restore</th></tr></thead>
+            <thead><tr><th>Invoice</th><th>Parent</th><th>Phone</th><th>Email</th><th>Status</th><th>Payment Type</th><th>Days</th><th>Pickup</th><th>Notes</th><th>Edit</th><th>Restore</th><th>Delete</th></tr></thead>
             <tbody id="archivedBody"></tbody>
           </table>
         </div>
@@ -496,6 +503,56 @@
       <div class="modal-actions">
         <button class="ghost" id="inventoryDeleteCancelBtn" type="button">Cancel</button>
         <button class="primary inventory-confirm-delete" id="inventoryDeleteConfirmBtn" type="button">Delete</button>
+      </div>
+    </div>
+  </div>
+  <div class="modal-backdrop no-print" id="invoiceDeleteModal" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="invoiceDeleteTitle">
+      <div class="modal-head">
+        <div>
+          <h2 id="invoiceDeleteTitle">Delete Saved Order</h2>
+          <p id="invoiceDeleteMessage">This saved order will be permanently deleted.</p>
+        </div>
+      </div>
+      <label class="delete-inventory-option">
+        <input id="invoiceDeleteRestoreInventory" type="checkbox">
+        <span>
+          Restore inventory used by this order
+          <small>Use only for test orders or mistakes. Leave unchecked for real orders that customers already picked up.</small>
+        </span>
+      </label>
+      <div class="modal-actions">
+        <button class="ghost" id="invoiceDeleteCancelBtn" type="button">Cancel</button>
+        <button class="primary inventory-confirm-delete" id="invoiceDeleteConfirmBtn" type="button">Delete Order</button>
+      </div>
+    </div>
+  </div>
+  <div class="modal-backdrop no-print" id="inventoryCsvModal" hidden>
+    <div class="modal-card inventory-csv-card" role="dialog" aria-modal="true" aria-labelledby="inventoryCsvTitle">
+      <div class="modal-head">
+        <div>
+          <h2 id="inventoryCsvTitle">Upload Inventory CSV</h2>
+          <p>CSV columns must match the inventory export format.</p>
+        </div>
+      </div>
+      <div class="inventory-csv-help">
+        <p>Required columns:</p>
+        <code>Product Code, Product, Price, Status, Minimum stock, Available Stock, Supplier, Report Color</code>
+        <p>Product should use Color + Size + Item, for example Ash L T-shirt or Black 10/12 LS POLO.</p>
+      </div>
+      <form id="inventoryCsvForm" class="inventory-csv-form">
+        <label>CSV File<input id="inventoryCsvFile" type="file" accept=".csv,text/csv" required></label>
+        <label>Upload Mode
+          <select id="inventoryCsvMode">
+            <option value="merge">Add / Update Inventory</option>
+            <option value="replace">Replace Inventory</option>
+          </select>
+        </label>
+      </form>
+      <p class="autosave-status" id="inventoryCsvStatus">Choose a CSV file to upload.</p>
+      <div class="modal-actions">
+        <button class="ghost" id="inventoryCsvCancelBtn" type="button">Cancel</button>
+        <button class="primary" id="inventoryCsvImportBtn" type="submit" form="inventoryCsvForm">Import CSV</button>
       </div>
     </div>
   </div>
