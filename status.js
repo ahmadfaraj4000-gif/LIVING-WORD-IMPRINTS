@@ -34,6 +34,16 @@ function formatDisplayDate(value){
   }).format(new Date(year, month - 1, day));
 }
 
+function dateOnly(value){
+  const [year, month, day] = String(value || '').split('-').map(Number);
+  if (!year || !month || !day) return null;
+  return new Date(year, month - 1, day);
+}
+
+function daysBetween(start, end){
+  return Math.floor((end - start) / (1000 * 60 * 60 * 24));
+}
+
 function setMessage(message = '', state = ''){
   statusMessage.textContent = message;
   statusMessage.className = 'status-message';
@@ -46,14 +56,64 @@ function statusClass(status){
   return `status-pill ${normalized}`;
 }
 
+function progressForOrder(row){
+  const status = row.status || 'Received';
+  if (status === 'Completed') {
+    return {
+      percent: 100,
+      message: 'Your order is complete.'
+    };
+  }
+
+  const orderDate = dateOnly(row.order_date);
+  const pickupDate = dateOnly(row.pickup_date);
+
+  if (!orderDate || !pickupDate) {
+    return {
+      percent: status === 'In Progress' ? 45 : 15,
+      message: 'Pickup date coming soon.'
+    };
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const totalDays = Math.max(1, daysBetween(orderDate, pickupDate));
+  const elapsedDays = Math.max(0, daysBetween(orderDate, today));
+  const timeProgress = Math.min(1, elapsedDays / totalDays);
+
+  if (status === 'In Progress') {
+    return {
+      percent: Math.round(35 + (timeProgress * 50)),
+      message: 'Updates as your pickup date approaches.'
+    };
+  }
+
+  return {
+    percent: Math.round(10 + (timeProgress * 20)),
+    message: 'Your order has been received.'
+  };
+}
+
 function renderOrder(row){
   const rawStatus = row.status || 'Received';
   const label = statusLabels[rawStatus] || rawStatus;
+  const progress = progressForOrder(row);
 
   statusResult.innerHTML = `
     <div class="status-result-top">
       <span class="${esc(statusClass(rawStatus))}">${esc(label)}</span>
       <strong>Invoice ${esc(row.invoice_number || '')}</strong>
+    </div>
+    <div class="order-progress">
+      <div class="order-progress-head">
+        <span>Order Progress</span>
+        <strong>${esc(progress.percent)}%</strong>
+      </div>
+      <div class="order-progress-track" aria-label="Order progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${esc(progress.percent)}" role="progressbar">
+        <span style="width:${esc(progress.percent)}%"></span>
+      </div>
+      <p>${esc(progress.message)}</p>
     </div>
     <dl class="status-details">
       <div>
