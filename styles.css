@@ -1255,7 +1255,8 @@ button {
 }
 
 .thank-you {
-	padding: 10px 14px
+	padding: 10px 14px;
+	position: relative
 }
 
 .thank-you h2 {
@@ -1267,6 +1268,31 @@ button {
 .thank-you p {
 	font-weight: 700;
 	margin: 0
+}
+
+.order-status-qr {
+	align-items: center;
+	bottom: 8px;
+	display: flex;
+	gap: 10px;
+	position: absolute;
+	right: 12px
+}
+
+.order-status-qr span {
+	font-size: 14px;
+	font-weight: 900;
+	line-height: 1.12;
+	text-align: right;
+	text-transform: uppercase
+}
+
+.order-status-qr img {
+	display: block;
+	height: 88px;
+	image-rendering: pixelated;
+	object-fit: contain;
+	width: 88px
 }
 
 .totals {
@@ -2366,6 +2392,22 @@ main.app-shell.wrap {
   .thank-you p {
     font-size: 11px !important;
     line-height: 1.15 !important;
+  }
+
+  .order-status-qr {
+    bottom: 8px !important;
+    gap: 8px !important;
+    right: 10px !important;
+  }
+
+  .order-status-qr span {
+    font-size: 10px !important;
+    line-height: 1.08 !important;
+  }
+
+  .order-status-qr img {
+    height: .78in !important;
+    width: .78in !important;
   }
 
   .total-row {

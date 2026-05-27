@@ -1644,7 +1644,14 @@ function renderPreview(){
     </div>
     <table class="items-table"><thead><tr><th>Amount</th><th>Item Description</th><th>Color</th><th>Size</th><th>Price<br>EA</th><th>Line<br>Total</th></tr></thead><tbody>${rows}</tbody></table>
     <div class="middle-bottom">
-      <div class="thank-you"><h2>Thank You for your order</h2><p><em>If you are happy with our products and services, please let others know by giving us a review. If not, please tell us.</em></p></div>
+      <div class="thank-you">
+        <h2>Thank You for your order</h2>
+        <p><em>If you are happy with our products and services, please let others know by giving us a review. If not, please tell us.</em></p>
+        <div class="order-status-qr">
+          <span>Scan to check<br>your order status</span>
+          <img src="assets/lam-status.png" alt="Scan to check your order status">
+        </div>
+      </div>
       <div class="totals">
         <div class="total-row"><span>SUB TOTAL</span><span class="printed-entry">${money(d.subtotal)}</span></div>
         <div class="total-row"><span>DISCOUNT</span><span class="printed-entry">${esc(discountLabel)}</span></div>
