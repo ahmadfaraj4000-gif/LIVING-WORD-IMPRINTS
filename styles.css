@@ -1839,6 +1839,57 @@ button {
 	gap: 8px
 }
 
+.delete-requests-panel {
+	margin: 16px 0
+}
+
+.compact-head {
+	border-radius: 10px 10px 0 0;
+	padding: 12px 14px
+}
+
+.delete-request-row {
+	align-items: center;
+	background: #fff;
+	border: 1px solid #eee;
+	border-radius: 8px;
+	display: grid;
+	gap: 12px;
+	grid-template-columns: minmax(0, 1fr) auto;
+	padding: 12px
+}
+
+.delete-request-row p {
+	color: var(--muted);
+	margin: 4px 0 0
+}
+
+.delete-request-actions {
+	display: flex;
+	gap: 8px
+}
+
+.delete-reason-field {
+	display: grid;
+	font-size: 13px;
+	font-weight: 800;
+	gap: 6px
+}
+
+.delete-reason-field textarea {
+	border: 1px solid #ccc;
+	border-radius: 8px;
+	font: inherit;
+	padding: 11px;
+	resize: vertical;
+	width: 100%
+}
+
+.role-locked-price {
+	background: #f4f4f4;
+	color: #666
+}
+
 .settings-check {
 	align-items: center;
 	display: flex;
@@ -1872,6 +1923,10 @@ button {
 
 	.settings-form label {
 		min-width: 0
+	}
+
+	.delete-request-row {
+		grid-template-columns: 1fr
 	}
 }
 

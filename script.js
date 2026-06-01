@@ -77,6 +77,14 @@ const invoiceDeleteMessage = document.getElementById('invoiceDeleteMessage');
 const invoiceDeleteRestoreInventory = document.getElementById('invoiceDeleteRestoreInventory');
 const invoiceDeleteCancelBtn = document.getElementById('invoiceDeleteCancelBtn');
 const invoiceDeleteConfirmBtn = document.getElementById('invoiceDeleteConfirmBtn');
+const invoiceDeleteRequestModal = document.getElementById('invoiceDeleteRequestModal');
+const invoiceDeleteRequestMessage = document.getElementById('invoiceDeleteRequestMessage');
+const invoiceDeleteRequestReason = document.getElementById('invoiceDeleteRequestReason');
+const invoiceDeleteRequestCancelBtn = document.getElementById('invoiceDeleteRequestCancelBtn');
+const invoiceDeleteRequestSubmitBtn = document.getElementById('invoiceDeleteRequestSubmitBtn');
+const deleteRequestsPanel = document.getElementById('deleteRequestsPanel');
+const deleteRequestsList = document.getElementById('deleteRequestsList');
+const refreshDeleteRequestsBtn = document.getElementById('refreshDeleteRequestsBtn');
 const reportDateFilter = document.getElementById('reportDateFilter');
 const reportSchoolSelect = document.getElementById('reportSchoolSelect');
 const reportLimitSelect = document.getElementById('reportLimitSelect');
@@ -115,6 +123,17 @@ const dashboardIds = {
 const INTERNAL_META_MARKER = 'LWI_INTERNAL_META:';
 const ADMIN_USERNAME = 'livingwordimprints';
 const ADMIN_AUTH_EMAIL = 'lwimprints@gmail.com';
+const STAFF_LOGIN_ACCOUNTS = {
+  employee1: 'employee1@livingwordimprints.com',
+  employee2: 'employee2@livingwordimprints.com',
+  employee3: 'employee3@livingwordimprints.com',
+  manager1: 'manager1@livingwordimprints.com'
+};
+const STAFF_ROLE_VIEWS = {
+  admin: ['dashboard', 'edit', 'preview', 'reports', 'inventory', 'database', 'archived', 'settings'],
+  manager: ['edit', 'preview', 'database'],
+  employee: ['edit', 'preview', 'database']
+};
 const SUPABASE_URL = 'https://wwawmmnckibtamquillt.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind3YXdtbW5ja2lidGFtcXVpbGx0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg4MTk1NjEsImV4cCI6MjA5NDM5NTU2MX0.kfc9UXmvm1jfYIhW3vHaKbpEBupu1xurQxlYCKoupPY';
 
@@ -140,12 +159,16 @@ let stockAdjustmentsByInvoice = new Map();
 let appInitialized = false;
 let returningCustomers = [];
 let pendingInvoiceDeleteId = null;
+let pendingInvoiceDeleteRequestId = null;
 let inventoryChangesPending = false;
 let reportDateRange = 'thisYear';
 let reportSchoolFilter = '';
 let reportChartLimit = '20';
 let reportIncludesArchived = true;
 let latestReportRows = [];
+let currentSession = null;
+let currentStaffProfile = null;
+let invoiceStaffColumnsAvailable = true;
 const INVENTORY_STORAGE_KEY = 'lwi_inventory_items_v1';
 const INVENTORY_DELETED_KEY = 'lwi_inventory_deleted_products_v1';
 const STOCK_META_KEY = 'stockAdjustments';
@@ -207,6 +230,81 @@ function saveAppSettings(nextSettings){
     ...appSettings(),
     ...nextSettings
   }));
+}
+function currentRole(){
+  return currentStaffProfile?.role || 'employee';
+}
+function currentStaffName(){
+  return currentStaffProfile?.name || currentSession?.user?.email || '';
+}
+function isAdmin(){
+  return currentRole() === 'admin';
+}
+function isManagerOrAdmin(){
+  return currentRole() === 'manager' || currentRole() === 'admin';
+}
+function canOverridePrices(){
+  return isManagerOrAdmin();
+}
+function allowedViews(){
+  return STAFF_ROLE_VIEWS[currentRole()] || STAFF_ROLE_VIEWS.employee;
+}
+function canAccessView(view){
+  return allowedViews().includes(view);
+}
+function applyRoleAccess(){
+  const views = allowedViews();
+  document.querySelectorAll('.tab').forEach(tab => {
+    const allowed = views.includes(tab.dataset.view);
+    tab.hidden = !allowed;
+    tab.disabled = !allowed;
+  });
+
+  const activeTab = document.querySelector('.tab.active');
+  if (activeTab && !canAccessView(activeTab.dataset.view)) {
+    document.querySelector(`.tab[data-view="${views[0]}"]`)?.click();
+  }
+
+  if (deleteRequestsPanel) deleteRequestsPanel.hidden = !isManagerOrAdmin();
+  updatePriceAccess();
+  renderEmployees();
+}
+function updatePriceAccess(){
+  if (!form) return;
+  const locked = !canOverridePrices();
+  for (let i = 0; i < itemCount; i++) {
+    const input = form.elements[`price_${i}`];
+    if (!input) continue;
+    input.readOnly = locked;
+    input.classList.toggle('role-locked-price', locked);
+    input.title = locked ? 'Managers can override prices.' : '';
+  }
+}
+async function loadStaffProfile(session){
+  if (!session?.user) return null;
+
+  const email = String(session.user.email || '').toLowerCase();
+  const { data, error } = await supabaseClient
+    .from('staff_profiles')
+    .select('*')
+    .eq('id', session.user.id)
+    .maybeSingle();
+
+  if (!error && data?.active) return data;
+
+  if (email === ADMIN_AUTH_EMAIL) {
+    return {
+      id: session.user.id,
+      username: ADMIN_USERNAME,
+      email: ADMIN_AUTH_EMAIL,
+      name: 'Living Word Admin',
+      role: 'admin',
+      active: true
+    };
+  }
+
+  console.warn('Staff profile unavailable.', error);
+  return null;
 }
 function showAppModal({
   title = 'Message',
@@ -293,7 +391,7 @@ function setLoginError(message = ''){
   adminLoginError.hidden = !message;
 }
 function setAuthScreen(session){
-  const signedIn = Boolean(session);
+  const signedIn = Boolean(session && currentStaffProfile);
   if (authView) authView.hidden = signedIn;
   if (siteHeader) siteHeader.hidden = !signedIn;
   if (appShell) appShell.hidden = !signedIn;
@@ -460,6 +558,29 @@ function statusSelectCell(row){
     <select class="status-select" data-id="${esc(row.id)}">
       ${statuses.map(status => `<option ${status === currentStatus ? 'selected' : ''}>${esc(status)}</option>`).join('')}
     </select>
+  `;
+}
+function databaseArchiveCell(row){
+  if (!isManagerOrAdmin()) return '';
+  return `
+    <button class="archive-invoice-btn" data-id="${esc(row.id)}">
+      Archive
+    </button>
+  `;
+}
+function databaseDeleteCell(row){
+  if (isManagerOrAdmin()) {
+    return `
+      <button class="delete-invoice-btn" data-id="${esc(row.id)}">
+        Delete
+      </button>
+    `;
+  }
+
+  return `
+    <button class="request-delete-invoice-btn" data-id="${esc(row.id)}">
+      Request Delete
+    </button>
   `;
 }
 function showVoucherDetails(row){
@@ -685,7 +806,7 @@ function clearOrderFieldsForNewCustomerOrder(){
   form.voucherProvider.value = '';
   form.voucherAmount.value = '';
   form.status.value = 'Received';
-  form.orderTakenBy.value = '';
+  setLoggedInOrderTaker();
   form.notes.value = '';
 }
 
@@ -1313,7 +1434,33 @@ function createRows(existingItems=[]){
     itemsEditor.appendChild(row);
   }
   existingItems.forEach((item,i)=>Object.keys(item).forEach(k=>{const el=form.elements[`${k}_${i}`]; if(el) el.value=item[k]??'';}));
+  updatePriceAccess();
   updateStockWarnings();
+}
+function setLoggedInOrderTaker(){
+  if (!form?.orderTakenBy) return;
+  const name = currentStaffName();
+  if (name) setOrderTakenByValue(name);
+}
+function normalizeEmployeeLineItem(item){
+  if (canOverridePrices()) return item;
+
+  const inventoryItem = item.inventory_id
+    ? inventoryItems.find(row => String(inventoryKey(row)) === String(item.inventory_id))
+    : findInventoryItem(item.description);
+
+  if (!inventoryItem || inventoryItem.price === '' || inventoryItem.price == null) {
+    return { ...item, price: '', line: '' };
+  }
+
+  const price = Number(inventoryItem.price);
+  const amount = Number(item.amount) || 0;
+  return {
+    ...item,
+    inventory_id: inventoryKey(inventoryItem),
+    price: price.toFixed(2),
+    line: amount ? (amount * price).toFixed(2) : ''
+  };
 }
 function formData(){
   const data=Object.fromEntries(new FormData(form).entries());
@@ -1322,7 +1469,7 @@ function formData(){
   data.phone = formatPhoneNumber(data.phone);
   data.items=[];
   for(let i=0;i<itemCount;i++){
-    data.items.push({amount:data[`amount_${i}`]||'',description:data[`description_${i}`]||'',color:data[`color_${i}`]||'',size:data[`size_${i}`]||'',price:data[`price_${i}`]||'',line:data[`line_${i}`]||'',inventory_id:data[`inventory_id_${i}`]||''});
+    data.items.push(normalizeEmployeeLineItem({amount:data[`amount_${i}`]||'',description:data[`description_${i}`]||'',color:data[`color_${i}`]||'',size:data[`size_${i}`]||'',price:data[`price_${i}`]||'',line:data[`line_${i}`]||'',inventory_id:data[`inventory_id_${i}`]||''}));
   }
   return data;
 }
@@ -1334,7 +1481,7 @@ function invoiceRowFromForm(){
   const internalMeta = {
     parentFirstName: d.parentFirstName || '',
     parentLastName: d.parentLastName || '',
-    orderTakenBy: d.orderTakenBy || '',
+    orderTakenBy: d.orderTakenBy || currentStaffName() || '',
     paymentType: d.paymentType || '',
     discountMode: d.discountMode || 'dollar',
     discountValue: Number(d.discount) || 0,
@@ -1379,8 +1526,22 @@ function invoiceRowFromForm(){
 
     status: d.status || 'Received',
     notes: packStoredNotes(d.notes || '', internalMeta),
+    taken_by_user_id: currentSession?.user?.id || null,
+    taken_by_name: d.orderTakenBy || currentStaffName() || '',
     archived: editingInvoiceId ? editingInvoiceArchived : false
   };
+}
+function missingStaffInvoiceColumns(error){
+  const message = String(error?.message || error?.details || '');
+  return message.includes('taken_by_user_id') || message.includes('taken_by_name');
+}
+function invoiceRowForWrite(row){
+  if (invoiceStaffColumnsAvailable) return row;
+
+  const cleanRow = { ...row };
+  delete cleanRow.taken_by_user_id;
+  delete cleanRow.taken_by_name;
+  return cleanRow;
 }
 
 function setAutosaveStatus(message, state = ''){
@@ -1455,10 +1616,19 @@ async function autosaveExistingInvoice(){
   isAutosaving = true;
   setAutosaveStatus('Saving...', 'saving');
 
-  const { error } = await supabaseClient
+  let row = invoiceRowForAutosave();
+  let { error } = await supabaseClient
     .from('invoices')
-    .update(invoiceRowForAutosave())
+    .update(invoiceRowForWrite(row))
     .eq('id', editingInvoiceId);
+
+  if (error && missingStaffInvoiceColumns(error)) {
+    invoiceStaffColumnsAvailable = false;
+    error = (await supabaseClient
+      .from('invoices')
+      .update(invoiceRowForWrite(row))
+      .eq('id', editingInvoiceId)).error;
+  }
 
   isAutosaving = false;
 
@@ -1508,7 +1678,7 @@ function setForm(data){
   form.voucherAmount.value = storedNotes.meta.voucherAmount || data.voucher_amount || data.voucherAmount || '';
 
   form.status.value = data.status || 'Received';
-  setOrderTakenByValue(storedNotes.meta.orderTakenBy || data.order_taken_by || data.orderTakenBy || '');
+  setOrderTakenByValue(data.taken_by_name || storedNotes.meta.orderTakenBy || data.order_taken_by || data.orderTakenBy || '');
   form.notes.value = storedNotes.notes || '';
 
   itemCount = Math.max(3, (data.items || []).length);
@@ -1681,6 +1851,7 @@ async function renderDatabase(){
   databaseBody.innerHTML = '';
   populateDatabaseSchools(rows);
   updateFilterDisplay();
+  renderDeleteRequests();
 
   rows
     .filter(rowMatchesDatabaseFilter)
@@ -1706,16 +1877,8 @@ async function renderDatabase(){
             Edit
           </button>
         </td>
-        <td>
-          <button class="archive-invoice-btn" data-id="${x.id}">
-            Archive
-          </button>
-        </td>
-        <td>
-          <button class="delete-invoice-btn" data-id="${x.id}">
-            Delete
-          </button>
-        </td>
+        <td>${databaseArchiveCell(x)}</td>
+        <td>${databaseDeleteCell(x)}</td>
       `;
 
       databaseBody.appendChild(tr);
@@ -2238,10 +2401,10 @@ function employeeNames(){
   try {
     const stored = JSON.parse(localStorage.getItem(EMPLOYEES_STORAGE_KEY) || '[]');
     const names = Array.isArray(stored) ? stored : [];
-    return [...new Set([...DEFAULT_EMPLOYEES, ...names].map(name => String(name || '').trim()).filter(Boolean))];
+    return [...new Set([...DEFAULT_EMPLOYEES, currentStaffName(), ...names].map(name => String(name || '').trim()).filter(Boolean))];
   } catch (error) {
     console.warn('Could not read employee names.', error);
-    return [...DEFAULT_EMPLOYEES];
+    return [...new Set([...DEFAULT_EMPLOYEES, currentStaffName()].filter(Boolean))];
   }
 }
 
@@ -2271,6 +2434,8 @@ function renderEmployees(){
   form.orderTakenBy.value = currentValue || '';
 
   if (!employeeList) return;
+  if (employeeForm) employeeForm.hidden = !isAdmin();
+  if (form.orderTakenBy) form.orderTakenBy.disabled = !isAdmin();
   employeeList.innerHTML = names.map(name => `
     <div class="employee-row">
       <span>${esc(name)}</span>
@@ -2520,21 +2685,41 @@ async function submitInvoice(){
 
     const result = await supabaseClient
       .from('invoices')
-      .update(invoiceRow)
+      .update(invoiceRowForWrite(invoiceRow))
       .eq('id', editingInvoiceId);
 
     error = result.error;
+
+    if (error && missingStaffInvoiceColumns(error)) {
+      invoiceStaffColumnsAvailable = false;
+      const retry = await supabaseClient
+        .from('invoices')
+        .update(invoiceRowForWrite(invoiceRow))
+        .eq('id', editingInvoiceId);
+      error = retry.error;
+    }
 
   } else {
 
     const result = await supabaseClient
       .from('invoices')
-      .insert([invoiceRow])
+      .insert([invoiceRowForWrite(invoiceRow)])
       .select('id, archived')
       .single();
 
     error = result.error;
     savedInvoice = result.data;
+
+    if (error && missingStaffInvoiceColumns(error)) {
+      invoiceStaffColumnsAvailable = false;
+      const retry = await supabaseClient
+        .from('invoices')
+        .insert([invoiceRowForWrite(invoiceRow)])
+        .select('id, archived')
+        .single();
+      error = retry.error;
+      savedInvoice = retry.data;
+    }
   }
 
   if (error) {
@@ -2598,6 +2783,7 @@ function newInvoice(){
   form.voucherId.value = '';
   form.voucherProvider.value = '';
   form.voucherAmount.value = '';
+  setLoggedInOrderTaker();
   stockAdjustmentsByInvoice.delete('');
   resetCustomerDropdown();
   renderCustomerHistory(null);
@@ -2608,7 +2794,20 @@ function newInvoice(){
   document.querySelector('[data-view="edit"]')?.click();
 }
 
-document.querySelectorAll('.tab').forEach(btn=>btn.addEventListener('click',()=>{document.querySelectorAll('.tab,.view').forEach(x=>x.classList.remove('active'));btn.classList.add('active');document.getElementById(btn.dataset.view+'View').classList.add('active');updateAutosaveVisibility();renderPreview();renderDatabase();renderArchivedDatabase();renderDashboard();renderReports();renderInventory();}));
+document.querySelectorAll('.tab').forEach(btn=>btn.addEventListener('click',()=>{
+  if (!canAccessView(btn.dataset.view)) return;
+  document.querySelectorAll('.tab,.view').forEach(x=>x.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById(btn.dataset.view+'View').classList.add('active');
+  updateAutosaveVisibility();
+  renderPreview();
+  renderDatabase();
+  renderArchivedDatabase();
+  renderDashboard();
+  renderReports();
+  renderInventory();
+  renderDeleteRequests();
+}));
 document.querySelectorAll('.filter-card').forEach(card => {
   card.addEventListener('click', () => {
     dashboardFilter = card.dataset.dashboardFilter;
@@ -2739,6 +2938,25 @@ if (invoiceDeleteConfirmBtn) invoiceDeleteConfirmBtn.addEventListener('click', d
 if (invoiceDeleteModal) {
   invoiceDeleteModal.addEventListener('click', e => {
     if (e.target === invoiceDeleteModal) closeInvoiceDeleteModal();
+  });
+}
+if (invoiceDeleteRequestCancelBtn) invoiceDeleteRequestCancelBtn.addEventListener('click', closeInvoiceDeleteRequestModal);
+if (invoiceDeleteRequestSubmitBtn) invoiceDeleteRequestSubmitBtn.addEventListener('click', submitInvoiceDeleteRequest);
+if (invoiceDeleteRequestModal) {
+  invoiceDeleteRequestModal.addEventListener('click', e => {
+    if (e.target === invoiceDeleteRequestModal) closeInvoiceDeleteRequestModal();
+  });
+}
+if (refreshDeleteRequestsBtn) refreshDeleteRequestsBtn.addEventListener('click', renderDeleteRequests);
+if (deleteRequestsList) {
+  deleteRequestsList.addEventListener('click', async e => {
+    const approve = e.target.closest('.approve-delete-request-btn');
+    const deny = e.target.closest('.deny-delete-request-btn');
+    if (approve) {
+      await resolveDeleteRequest(approve.dataset.requestId, approve.dataset.invoiceId, true);
+    } else if (deny) {
+      await resolveDeleteRequest(deny.dataset.requestId, '', false);
+    }
   });
 }
 async function loadReturningCustomerById(id) {
@@ -3009,6 +3227,11 @@ async function setArchivedStatus(id, archived){
 }
 
 function openInvoiceDeleteModal(id){
+  if (!isManagerOrAdmin()) {
+    openInvoiceDeleteRequestModal(id);
+    return;
+  }
+
   const invoice = cachedAllInvoices.find(row => String(row.id) === String(id)) || {};
   pendingInvoiceDeleteId = id;
 
@@ -3023,6 +3246,156 @@ function openInvoiceDeleteModal(id){
 function closeInvoiceDeleteModal(){
   pendingInvoiceDeleteId = null;
   if (invoiceDeleteModal) invoiceDeleteModal.hidden = true;
+}
+
+function openInvoiceDeleteRequestModal(id){
+  const invoice = cachedAllInvoices.find(row => String(row.id) === String(id)) || {};
+  pendingInvoiceDeleteRequestId = id;
+
+  if (invoiceDeleteRequestMessage) {
+    invoiceDeleteRequestMessage.textContent = `Ask a manager to delete invoice ${invoice.invoice_number || ''} for ${invoice.parent_name || 'this customer'}.`;
+  }
+  if (invoiceDeleteRequestReason) invoiceDeleteRequestReason.value = '';
+
+  if (invoiceDeleteRequestModal) invoiceDeleteRequestModal.hidden = false;
+  setTimeout(() => invoiceDeleteRequestReason?.focus(), 0);
+}
+
+function closeInvoiceDeleteRequestModal(){
+  pendingInvoiceDeleteRequestId = null;
+  if (invoiceDeleteRequestModal) invoiceDeleteRequestModal.hidden = true;
+}
+
+async function submitInvoiceDeleteRequest(){
+  if (!pendingInvoiceDeleteRequestId || !currentSession?.user) return;
+
+  const invoiceId = pendingInvoiceDeleteRequestId;
+  const reason = String(invoiceDeleteRequestReason?.value || '').trim();
+  closeInvoiceDeleteRequestModal();
+
+  const { error } = await supabaseClient
+    .from('invoice_delete_requests')
+    .insert([{
+      invoice_id: invoiceId,
+      requested_by: currentSession.user.id,
+      requested_by_name: currentStaffName(),
+      reason,
+      status: 'pending'
+    }]);
+
+  if (error) {
+    console.error(error);
+    await appNotice('Request Failed', 'Could not send the delete request. Check the Supabase staff access setup.', 'error');
+    return;
+  }
+
+  const invoice = cachedAllInvoices.find(row => String(row.id) === String(invoiceId));
+  if (invoice) {
+    await supabaseClient
+      .from('invoices')
+      .update({ delete_requested_at: new Date().toISOString() })
+      .eq('id', invoiceId);
+  }
+
+  await appNotice('Request Sent', 'A manager can now approve or deny this delete request.', 'success');
+  await renderDeleteRequests();
+}
+
+async function getPendingDeleteRequests(){
+  if (!isManagerOrAdmin()) return [];
+
+  const { data, error } = await supabaseClient
+    .from('invoice_delete_requests')
+    .select('*')
+    .eq('status', 'pending')
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    console.warn('Could not load delete requests.', error);
+    return [];
+  }
+
+  return data || [];
+}
+
+async function renderDeleteRequests(){
+  if (!deleteRequestsPanel || !deleteRequestsList) return;
+  deleteRequestsPanel.hidden = !isManagerOrAdmin();
+  if (!isManagerOrAdmin()) return;
+
+  const requests = await getPendingDeleteRequests();
+  const invoiceMap = new Map(cachedAllInvoices.map(row => [String(row.id), row]));
+
+  deleteRequestsList.innerHTML = requests.length
+    ? requests.map(request => {
+        const invoice = invoiceMap.get(String(request.invoice_id)) || {};
+        return `
+          <div class="delete-request-row">
+            <div>
+              <strong>Invoice ${esc(invoice.invoice_number || request.invoice_id)}</strong>
+              <p>${esc(invoice.parent_name || 'Unknown customer')} / Requested by ${esc(request.requested_by_name || '')}</p>
+              <p>${esc(request.reason || 'No reason provided.')}</p>
+            </div>
+            <div class="delete-request-actions">
+              <button class="ghost deny-delete-request-btn" data-request-id="${esc(request.id)}" type="button">Deny</button>
+              <button class="primary approve-delete-request-btn" data-request-id="${esc(request.id)}" data-invoice-id="${esc(request.invoice_id)}" type="button">Approve</button>
+            </div>
+          </div>
+        `;
+      }).join('')
+    : '<p class="history-empty">No pending delete requests.</p>';
+}
+
+async function resolveDeleteRequest(requestId, invoiceId, approved){
+  if (!isManagerOrAdmin()) return;
+
+  const now = new Date().toISOString();
+  const request = {
+    status: approved ? 'approved' : 'denied',
+    resolved_by: currentSession?.user?.id || null,
+    resolved_by_name: currentStaffName(),
+    resolved_at: now
+  };
+
+  if (approved) {
+    const invoice = cachedAllInvoices.find(row => String(row.id) === String(invoiceId)) || {};
+    const deleteReason = `Approved delete request by ${currentStaffName()}`;
+
+    const { error: invoiceError } = await supabaseClient
+      .from('invoices')
+      .update({
+        archived: true,
+        deleted_at: now,
+        deleted_by: currentSession?.user?.id || null,
+        deleted_by_name: currentStaffName(),
+        delete_reason: deleteReason
+      })
+      .eq('id', invoiceId);
+
+    if (invoiceError) {
+      console.error(invoiceError);
+      await appNotice('Approval Failed', `Could not archive invoice ${invoice.invoice_number || ''}.`, 'error');
+      return;
+    }
+  }
+
+  const { error } = await supabaseClient
+    .from('invoice_delete_requests')
+    .update(request)
+    .eq('id', requestId);
+
+  if (error) {
+    console.error(error);
+    await appNotice('Request Update Failed', 'The delete request could not be updated.', 'error');
+    return;
+  }
+
+  await populateCustomers();
+  await renderDatabase();
+  await renderArchivedDatabase();
+  await renderDashboard();
+  await renderReports();
+  await renderDeleteRequests();
 }
 
 async function restoreInventoryForDeletedInvoice(invoice){
@@ -3157,8 +3530,12 @@ async function submitAdminLogin(event){
 
   const username = String(adminUsername?.value || '').trim();
   const password = adminPassword?.value || '';
+  const normalizedUsername = normalizedText(username);
+  const loginEmail = normalizedUsername === ADMIN_USERNAME
+    ? ADMIN_AUTH_EMAIL
+    : STAFF_LOGIN_ACCOUNTS[normalizedUsername];
 
-  if (normalizedText(username) !== ADMIN_USERNAME) {
+  if (!loginEmail) {
     setLoginError('Incorrect username or password.');
     return;
   }
@@ -3167,7 +3544,7 @@ async function submitAdminLogin(event){
   setLoginError('');
 
   const { data, error } = await supabaseClient.auth.signInWithPassword({
-    email: ADMIN_AUTH_EMAIL,
+    email: loginEmail,
     password
   });
 
@@ -3192,6 +3569,9 @@ async function signOutAdmin(){
     return;
   }
 
+  currentSession = null;
+  currentStaffProfile = null;
+  appInitialized = false;
   handleAuthSession(null);
 }
 
@@ -3208,12 +3588,18 @@ databaseBody.addEventListener('click', async e => {
   }
 
   if (e.target.classList.contains('archive-invoice-btn')) {
+    if (!isManagerOrAdmin()) return;
     await setArchivedStatus(e.target.dataset.id, true);
     return;
   }
 
   if (e.target.classList.contains('delete-invoice-btn')) {
     openInvoiceDeleteModal(e.target.dataset.id);
+    return;
+  }
+
+  if (e.target.classList.contains('request-delete-invoice-btn')) {
+    openInvoiceDeleteRequestModal(e.target.dataset.id);
   }
 });
 
@@ -3246,6 +3632,7 @@ async function init(){
   createRows();
   renderInvoiceSettings();
   renderEmployees();
+  applyRoleAccess();
   newInvoice();
   await loadInventory();
   await normalizeStoredPhoneNumbers();
@@ -3254,10 +3641,25 @@ async function init(){
   await renderArchivedDatabase();
   await renderDashboard();
   await renderReports();
+  await renderDeleteRequests();
 }
 
 async function handleAuthSession(session){
+  currentSession = session;
+  currentStaffProfile = session ? await loadStaffProfile(session) : null;
+
+  if (session && !currentStaffProfile) {
+    await supabaseClient.auth.signOut();
+    currentSession = null;
+    currentStaffProfile = null;
+    setAuthScreen(null);
+    setLoginError('This login is not active for staff access.');
+    return;
+  }
+
   setAuthScreen(session);
+  applyRoleAccess();
+
   if (!session || appInitialized) return;
 
   appInitialized = true;

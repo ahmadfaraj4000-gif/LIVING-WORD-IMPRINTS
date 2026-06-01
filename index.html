@@ -20,7 +20,6 @@
         <button class="primary" id="adminLoginBtn" type="submit">Log In</button>
       </form>
       <p class="auth-error" id="adminLoginError" hidden></p>
-      <p class="auth-link"><a href="https://status.livingwordimprints.com">Customer order status page</a></p>
     </section>
   </main>
 
@@ -293,6 +292,13 @@
           <span id="activeDatabaseFilterText"></span>
           <button class="ghost" id="clearDatabaseFilterBtn" type="button">Clear Filter</button>
         </div>
+        <div class="delete-requests-panel" id="deleteRequestsPanel" hidden>
+          <div class="database-head compact-head">
+            <h2>Delete Requests</h2>
+            <button class="ghost" id="refreshDeleteRequestsBtn" type="button">Refresh</button>
+          </div>
+          <div class="settings-list" id="deleteRequestsList"></div>
+        </div>
         <div class="table-wrap">
           <table class="db-table">
             <thead><tr><th>Invoice</th><th>Parent</th><th>Phone</th><th>Email</th><th>Status</th><th>Payment Type</th><th>Days</th><th>Pickup</th><th>Notes</th><th>Edit</th><th>Archive</th><th>Delete</th></tr></thead>
@@ -524,6 +530,23 @@
       <div class="modal-actions">
         <button class="ghost" id="invoiceDeleteCancelBtn" type="button">Cancel</button>
         <button class="primary inventory-confirm-delete" id="invoiceDeleteConfirmBtn" type="button">Delete Order</button>
+      </div>
+    </div>
+  </div>
+  <div class="modal-backdrop no-print" id="invoiceDeleteRequestModal" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="invoiceDeleteRequestTitle">
+      <div class="modal-head">
+        <div>
+          <h2 id="invoiceDeleteRequestTitle">Request Delete</h2>
+          <p id="invoiceDeleteRequestMessage">Send this saved order to a manager for approval.</p>
+        </div>
+      </div>
+      <label class="delete-reason-field">Reason
+        <textarea id="invoiceDeleteRequestReason" rows="4" placeholder="Why should this order be deleted?"></textarea>
+      </label>
+      <div class="modal-actions">
+        <button class="ghost" id="invoiceDeleteRequestCancelBtn" type="button">Cancel</button>
+        <button class="primary inventory-confirm-delete" id="invoiceDeleteRequestSubmitBtn" type="button">Send Request</button>
       </div>
     </div>
   </div>
